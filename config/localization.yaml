@@ -1,13 +1,13 @@
-localization_node:
+/**:
   ros__parameters:
     # Frame IDs
-    odom_frame_id: "camera_init"
+    odom_frame_id: "odom_lidar"
     base_frame_id: "base_link"
-    map_frame_id: "map"
-    
+    map_frame_id:  "map"
+
     # NDT Parameters
     localization:
-      ndt_resolution: 1.0        # NDT resolution (meters)
-      ndt_step_size: 0.1         # NDT step size
-      ndt_trans_epsilon: 0.01    # NDT transformation epsilon
-      ndt_max_iter: 30           # NDT maximum iterations
+      ndt_resolution: 1.0
+      ndt_step_size: 0.1
+      ndt_trans_epsilon: 0.005
+      ndt_max_iter: 30
