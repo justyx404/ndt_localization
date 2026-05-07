@@ -1,5 +1,7 @@
 #include "localization.h"
 
+#include <chrono>
+
 LocalizationNode::LocalizationNode() : Node("localization_node")
 {
   RCLCPP_INFO(this->get_logger(), "Initializing FAST-LIO Localization Node ...");
@@ -13,6 +15,9 @@ LocalizationNode::LocalizationNode() : Node("localization_node")
   this->declare_parameter<double>("localization.ndt_step_size", 0.1);
   this->declare_parameter<double>("localization.ndt_trans_epsilon", 0.01);
   this->declare_parameter<int>("localization.ndt_max_iter", 30);
+  this->declare_parameter<double>("localization.ndt_map_leaf_size", 0.0);
+  this->declare_parameter<double>("localization.ndt_scan_leaf_size", 0.0);
+  this->declare_parameter<bool>("localization.ndt_log_runtime", false);
 
   this->get_parameter("odom_frame_id", this->odom_frame_id_);
   this->get_parameter("base_frame_id", this->base_frame_id_);
@@ -21,6 +26,9 @@ LocalizationNode::LocalizationNode() : Node("localization_node")
   this->get_parameter("localization.ndt_step_size", this->ndt_step_size_);
   this->get_parameter("localization.ndt_trans_epsilon", this->ndt_trans_epsilon_);
   this->get_parameter("localization.ndt_max_iter", this->ndt_max_iter_);
+  this->get_parameter("localization.ndt_map_leaf_size", this->ndt_map_leaf_size_);
+  this->get_parameter("localization.ndt_scan_leaf_size", this->ndt_scan_leaf_size_);
+  this->get_parameter("localization.ndt_log_runtime", this->ndt_log_runtime_);
 
   // TF
   this->tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -62,8 +70,11 @@ void LocalizationNode::mapCallback(const sensor_msgs::msg::PointCloud2::ConstSha
   RCLCPP_INFO(this->get_logger(), "Received Global Map from topic. Points: %d", msg->width * msg->height);
 
   pcl::fromROSMsg(*msg, *this->global_map_);
+  const std::size_t raw_points = this->global_map_->size();
+  this->global_map_ = this->downsampleCloud(this->global_map_, this->ndt_map_leaf_size_);
 
-  RCLCPP_INFO(this->get_logger(), "Map received with %zu points. Building NDT...", this->global_map_->size());
+  RCLCPP_INFO(this->get_logger(), "Map received with %zu points. NDT target has %zu points. Building NDT...",
+              raw_points, this->global_map_->size());
 
   // NDT Setup
   this->ndt_.setResolution(this->ndt_resolution_);
@@ -74,6 +85,21 @@ void LocalizationNode::mapCallback(const sensor_msgs::msg::PointCloud2::ConstSha
   this->ndt_.setInputTarget(this->global_map_);
   this->map_initialized_ = true;
   RCLCPP_INFO(this->get_logger(), "NDT Target Map Set.");
+}
+
+pcl::PointCloud<PointType>::Ptr LocalizationNode::downsampleCloud(
+    const pcl::PointCloud<PointType>::Ptr& cloud, double leaf_size)
+{
+  if (leaf_size <= 0.0 || cloud->empty()) {
+    return cloud;
+  }
+
+  pcl::PointCloud<PointType>::Ptr filtered(new pcl::PointCloud<PointType>());
+  pcl::VoxelGrid<PointType> voxel_grid;
+  voxel_grid.setInputCloud(cloud);
+  voxel_grid.setLeafSize(leaf_size, leaf_size, leaf_size);
+  voxel_grid.filter(*filtered);
+  return filtered;
 }
 
 void LocalizationNode::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
@@ -147,6 +173,8 @@ void LocalizationNode::scanCallback(const sensor_msgs::msg::PointCloud2::ConstSh
 
   pcl::PointCloud<PointType>::Ptr scan(new pcl::PointCloud<PointType>());
   pcl::fromROSMsg(*msg, *scan);
+  const std::size_t raw_scan_points = scan->size();
+  scan = this->downsampleCloud(scan, this->ndt_scan_leaf_size_);
 
   // 1. Predict current pose in Map Frame
   // T_map_base_guess = T_map_odom * T_odom_base
@@ -158,9 +186,12 @@ void LocalizationNode::scanCallback(const sensor_msgs::msg::PointCloud2::ConstSh
   Eigen::Matrix4f guess_pose = this->map_to_odom_ * odom_to_base_curr;
 
   // 2. Align
+  const auto align_start = std::chrono::steady_clock::now();
   this->ndt_.setInputSource(scan);
   pcl::PointCloud<PointType>::Ptr output_cloud(new pcl::PointCloud<PointType>());
   this->ndt_.align(*output_cloud, guess_pose);
+  const auto align_end = std::chrono::steady_clock::now();
+  const auto align_ms = std::chrono::duration_cast<std::chrono::milliseconds>(align_end - align_start).count();
 
   // 3. Update Correction
   if (this->ndt_.hasConverged()) {
@@ -172,6 +203,14 @@ void LocalizationNode::scanCallback(const sensor_msgs::msg::PointCloud2::ConstSh
       RCLCPP_DEBUG(this->get_logger(), "NDT Converged. Score: %.4f", this->ndt_.getFitnessScore());
   } else {
       RCLCPP_WARN(this->get_logger(), "NDT Diverged!");
+  }
+
+  if (this->ndt_log_runtime_) {
+      RCLCPP_INFO_THROTTLE(
+          this->get_logger(), *this->get_clock(), 1000,
+          "NDT align: %ld ms, scan points: %zu -> %zu, iterations: %d, converged: %s",
+          align_ms, raw_scan_points, scan->size(), this->ndt_.getFinalNumIteration(),
+          this->ndt_.hasConverged() ? "true" : "false");
   }
 }
 

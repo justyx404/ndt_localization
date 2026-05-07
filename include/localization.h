@@ -35,6 +35,8 @@ private:
   void odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
   void scanCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void initialPoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg);
+  pcl::PointCloud<PointType>::Ptr downsampleCloud(
+      const pcl::PointCloud<PointType>::Ptr& cloud, double leaf_size);
 
   // ROS
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr map_sub_;
@@ -69,4 +71,7 @@ private:
   double ndt_step_size_;
   double ndt_trans_epsilon_;
   int ndt_max_iter_;
+  double ndt_map_leaf_size_;
+  double ndt_scan_leaf_size_;
+  bool ndt_log_runtime_;
 };
