@@ -11,3 +11,9 @@
       ndt_step_size: 0.1
       ndt_trans_epsilon: 0.005
       ndt_max_iter: 30
+      # Zero preserves the untouched baseline. Benchmark/tuned configurations
+      # must set these explicitly when filtering is under test.
+      ndt_map_leaf_size: 0.0
+      ndt_scan_leaf_size: 0.0
+      ndt_log_runtime: false
+      publish_scan_diagnostics: true

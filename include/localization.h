@@ -2,8 +2,11 @@
 
 #include <mutex>
 #include <memory>
+#include <cstddef>
 #include <string>
 
+#include "builtin_interfaces/msg/time.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -37,6 +40,20 @@ private:
   void initialPoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg);
   pcl::PointCloud<PointType>::Ptr downsampleCloud(
       const pcl::PointCloud<PointType>::Ptr& cloud, double leaf_size);
+  void publishScanDiagnostic(
+      const builtin_interfaces::msg::Time& stamp,
+      const std::string& decision,
+      bool accepted,
+      double conversion_ms,
+      double matcher_ms,
+      double validation_ms,
+      double total_ms,
+      double input_age_ms,
+      std::size_t raw_scan_points,
+      std::size_t filtered_scan_points,
+      int iterations,
+      bool converged,
+      double fitness_score);
 
   // ROS
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr map_sub_;
@@ -45,6 +62,7 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initial_pose_sub_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr scan_diagnostic_pub_;
 
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
@@ -57,6 +75,7 @@ private:
   Eigen::Matrix4f odom_to_base_;  // (current) odom -> base_link
   bool map_initialized_ = false;
   bool initial_pose_received_ = false;
+  std::size_t raw_map_points_ = 0;
 
   // Buffers
   std::mutex mutex_;
@@ -74,4 +93,5 @@ private:
   double ndt_map_leaf_size_;
   double ndt_scan_leaf_size_;
   bool ndt_log_runtime_;
+  bool publish_scan_diagnostics_;
 };

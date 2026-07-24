@@ -20,7 +20,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
 # Find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -38,6 +40,8 @@ find_package(PCL REQUIRED COMPONENTS common io segmentation filters kdtree searc
 
 set(dependencies
   rclcpp
+  builtin_interfaces
+  diagnostic_msgs
   geometry_msgs
   nav_msgs
   sensor_msgs
@@ -70,6 +74,8 @@ install(TARGETS localization_node
 # Install launch files
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
 )
 
 # Install config files
@@ -77,9 +83,25 @@ install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/localization_benchmark_evaluator.py
+  scripts/synthetic_initial_pose.py
+  scripts/run_development_baseline.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # Install include files
 install(DIRECTORY include/
   DESTINATION include/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(
+    benchmark_math
+    test/test_benchmark_math.py
+    TIMEOUT 30
+  )
+endif()
 
 ament_package()

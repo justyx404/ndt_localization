@@ -1,0 +1,35 @@
+/global_map:
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 1
+
+/odometry_lio:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 100
+
+/cloud_registered_body:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 10
+
+/tf:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 100
+
+/odometry_map:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 100
+
+/initialpose:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 10
