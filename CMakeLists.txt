@@ -61,14 +61,29 @@ include_directories(
   ${PCL_INCLUDE_DIRS}
 )
 
+# Phase 1 state, synchronization, and validation core
+add_library(localization_core src/localization_core.cpp)
+target_link_libraries(localization_core Eigen3::Eigen)
+target_include_directories(localization_core PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+)
+
 # Localization Node
 add_executable(localization_node src/localization.cpp)
-target_link_libraries(localization_node ${PCL_LIBRARIES} Eigen3::Eigen)
+target_link_libraries(
+  localization_node
+  localization_core
+  ${PCL_LIBRARIES}
+  Eigen3::Eigen
+)
 ament_target_dependencies(localization_node ${dependencies})
 
 # Install targets
-install(TARGETS localization_node
-  DESTINATION lib/${PROJECT_NAME}
+install(TARGETS localization_node localization_core
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 # Install launch files
@@ -97,7 +112,19 @@ install(DIRECTORY include/
 )
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
   find_package(ament_cmake_pytest REQUIRED)
+  ament_add_gtest(
+    localization_core_test
+    test/test_localization_core.cpp
+  )
+  if(TARGET localization_core_test)
+    target_link_libraries(
+      localization_core_test
+      localization_core
+      Eigen3::Eigen
+    )
+  endif()
   ament_add_pytest_test(
     benchmark_math
     test/test_benchmark_math.py

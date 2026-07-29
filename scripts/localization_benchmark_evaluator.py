@@ -256,17 +256,25 @@ class LocalizationBenchmarkEvaluator(Node):
         self.base_frame = self.get_parameter("base_frame_id").value.strip("/")
 
         self.map_to_odom = []
+        self.localization_map_to_odom = []
         self.odom_to_base = []
         self.recorded_map_odometry = []
         self.localization_odometry = []
         self.recorded_initial_poses = []
         self.synthetic_initial_poses = []
         self.scan_metrics = []
+        self.state_events = []
         self.finalized = False
 
         qos = QoSProfile(depth=2000)
         self.create_subscription(
             TFMessage, "/reference/tf", self.reference_tf_callback, qos
+        )
+        self.create_subscription(
+            TFMessage,
+            "/benchmark/tf",
+            self.localization_tf_callback,
+            qos,
         )
         self.create_subscription(
             Odometry, "/odometry_lio", self.odometry_callback, qos
@@ -311,6 +319,18 @@ class LocalizationBenchmarkEvaluator(Node):
             child = transform.child_frame_id.strip("/")
             if parent == self.map_frame and child == self.odom_frame:
                 self.map_to_odom.append(
+                    (
+                        stamp_seconds(transform.header.stamp),
+                        pose_from_transform(transform.transform),
+                    )
+                )
+
+    def localization_tf_callback(self, message):
+        for transform in message.transforms:
+            parent = transform.header.frame_id.strip("/")
+            child = transform.child_frame_id.strip("/")
+            if parent == self.map_frame and child == self.odom_frame:
+                self.localization_map_to_odom.append(
                     (
                         stamp_seconds(transform.header.stamp),
                         pose_from_transform(transform.transform),
@@ -363,14 +383,39 @@ class LocalizationBenchmarkEvaluator(Node):
     def scan_diagnostic_callback(self, message):
         timestamp = stamp_seconds(message.header.stamp)
         for status in message.status:
+            values = {item.key: item.value for item in status.values}
+            if status.name == "ndt_localization/state":
+                self.state_events.append(
+                    {
+                        "timestamp": timestamp,
+                        "reason": values.get("reason", status.message),
+                        "state": values.get("state", "UNKNOWN"),
+                        "correction_valid": (
+                            values.get(
+                                "correction_valid", "false"
+                            ).lower()
+                            == "true"
+                        ),
+                        "confirmation_count": int(
+                            values.get("confirmation_count", "0")
+                        ),
+                        "odometry_buffer_samples": int(
+                            values.get("odometry_buffer_samples", "0")
+                        ),
+                    }
+                )
+                continue
             if status.name != "ndt_localization/scan":
                 continue
-            values = {item.key: item.value for item in status.values}
             row = {
                 "timestamp": timestamp,
                 "decision": values.get("decision", status.message),
                 "accepted": values.get("accepted", "false").lower() == "true",
                 "converged": values.get("converged", "false").lower() == "true",
+                "state": values.get("state", "UNKNOWN"),
+                "correction_valid": (
+                    values.get("correction_valid", "false").lower() == "true"
+                ),
             }
             for key in (
                 "conversion_ms",
@@ -379,6 +424,10 @@ class LocalizationBenchmarkEvaluator(Node):
                 "validation_ms",
                 "total_ms",
                 "input_age_ms",
+                "odometry_before_gap_ms",
+                "odometry_after_gap_ms",
+                "translation_delta_m",
+                "rotation_delta_deg",
                 "fitness_score",
             ):
                 try:
@@ -391,6 +440,8 @@ class LocalizationBenchmarkEvaluator(Node):
                 "map_points_raw",
                 "target_points",
                 "iterations",
+                "confirmation_count",
+                "consecutive_rejections",
             ):
                 try:
                     row[key] = int(values.get(key, "0"))
@@ -404,12 +455,14 @@ class LocalizationBenchmarkEvaluator(Node):
         self.finalized = True
         os.makedirs(self.output_directory, exist_ok=True)
         self.map_to_odom.sort(key=lambda item: item[0])
+        self.localization_map_to_odom.sort(key=lambda item: item[0])
         self.odom_to_base.sort(key=lambda item: item[0])
         self.recorded_map_odometry.sort(key=lambda item: item[0])
         self.localization_odometry.sort(key=lambda item: item[0])
         self.recorded_initial_poses.sort(key=lambda item: item[0])
         self.synthetic_initial_poses.sort(key=lambda item: item[0])
         self.scan_metrics.sort(key=lambda item: item["timestamp"])
+        self.state_events.sort(key=lambda item: item["timestamp"])
 
         reference_rows = self._reference_rows()
         initial_pose_rows = self._initial_pose_rows()
@@ -451,18 +504,38 @@ class LocalizationBenchmarkEvaluator(Node):
                 "decision",
                 "accepted",
                 "converged",
+                "state",
+                "correction_valid",
                 "conversion_ms",
                 "local_map_ms",
                 "matcher_ms",
                 "validation_ms",
                 "total_ms",
                 "input_age_ms",
+                "odometry_before_gap_ms",
+                "odometry_after_gap_ms",
+                "translation_delta_m",
+                "rotation_delta_deg",
                 "scan_points_raw",
                 "scan_points_filtered",
                 "map_points_raw",
                 "target_points",
                 "iterations",
+                "confirmation_count",
+                "consecutive_rejections",
                 "fitness_score",
+            ),
+        )
+        self._write_csv(
+            "state_events.csv",
+            self.state_events,
+            (
+                "timestamp",
+                "reason",
+                "state",
+                "correction_valid",
+                "confirmation_count",
+                "odometry_buffer_samples",
             ),
         )
 
@@ -594,6 +667,7 @@ class LocalizationBenchmarkEvaluator(Node):
             row["rotation_error_deg"] for row in initial_pose_rows
         ]
         decisions = Counter(row["decision"] for row in self.scan_metrics)
+        states = Counter(row["state"] for row in self.scan_metrics)
         accepted = sum(1 for row in self.scan_metrics if row["accepted"])
         total_latencies = [row["total_ms"] for row in self.scan_metrics]
         deadline_misses = sum(
@@ -628,7 +702,7 @@ class LocalizationBenchmarkEvaluator(Node):
             with open(self.config_file, "rb") as config_input:
                 config_sha256 = hashlib.sha256(config_input.read()).hexdigest()
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "run": {
                 "name": self.run_name,
@@ -651,13 +725,18 @@ class LocalizationBenchmarkEvaluator(Node):
             },
             "samples": {
                 "map_to_odom_transforms": len(self.map_to_odom),
+                "localization_map_to_odom_transforms": len(
+                    self.localization_map_to_odom
+                ),
                 "odometry_lio": len(self.odom_to_base),
                 "recorded_odometry_map": len(self.recorded_map_odometry),
                 "localization_odometry_map": len(self.localization_odometry),
                 "recorded_initial_pose": len(self.recorded_initial_poses),
                 "synthetic_initial_pose": len(self.synthetic_initial_poses),
                 "scan_diagnostics": len(self.scan_metrics),
+                "state_events": len(self.state_events),
             },
+            "state_events": self.state_events,
             "localization_evaluation_start_timestamp": (
                 self.synthetic_initial_poses[0][0]
                 if self.synthetic_initial_poses
@@ -677,6 +756,7 @@ class LocalizationBenchmarkEvaluator(Node):
             },
             "scan_decisions": {
                 "counts": dict(sorted(decisions.items())),
+                "state_counts": dict(sorted(states.items())),
                 "accepted": accepted,
                 "rejected": len(self.scan_metrics) - accepted,
                 "accepted_fraction": (
@@ -696,6 +776,32 @@ class LocalizationBenchmarkEvaluator(Node):
                     "total_ms",
                     "input_age_ms",
                 )
+            },
+            "registration_validation": {
+                "translation_delta_m": distribution(
+                    [
+                        row["translation_delta_m"]
+                        for row in self.scan_metrics
+                    ]
+                ),
+                "rotation_delta_deg": distribution(
+                    [
+                        row["rotation_delta_deg"]
+                        for row in self.scan_metrics
+                    ]
+                ),
+                "odometry_before_gap_ms": distribution(
+                    [
+                        row["odometry_before_gap_ms"]
+                        for row in self.scan_metrics
+                    ]
+                ),
+                "odometry_after_gap_ms": distribution(
+                    [
+                        row["odometry_after_gap_ms"]
+                        for row in self.scan_metrics
+                    ]
+                ),
             },
         }
 

@@ -20,3 +20,26 @@
       # pass. Keep it disabled for untouched matcher timing baselines.
       ndt_compute_fitness_score: false
       publish_scan_diagnostics: true
+
+      # Phase 1 synchronization and input validation.
+      odom_buffer_duration_seconds: 3.0
+      odom_buffer_max_samples: 500
+      max_odom_interpolation_gap_seconds: 0.15
+      max_odometry_age_seconds: 0.5
+      max_scan_age_seconds: 0.5
+      max_initial_pose_age_seconds: 1.0
+      future_tolerance_seconds: 0.1
+      quaternion_norm_tolerance: 0.001
+      covariance_symmetry_tolerance: 0.000001
+      covariance_psd_tolerance: 0.000000001
+      max_initial_position_stddev_m: 10.0
+      max_initial_yaw_stddev_deg: 180.0
+
+      # A prior and registration result remain unpublished until three
+      # consecutive candidate corrections agree.
+      initialization_confirmation_scans: 3
+      max_result_translation_delta_m: 1.0
+      max_result_rotation_delta_deg: 20.0
+      max_confirmation_translation_delta_m: 0.5
+      max_confirmation_rotation_delta_deg: 10.0
+      max_consecutive_rejections: 10

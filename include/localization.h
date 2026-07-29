@@ -1,28 +1,31 @@
 #pragma once
 
-#include <mutex>
-#include <memory>
+#include <array>
 #include <cstddef>
+#include <limits>
+#include <memory>
+#include <mutex>
 #include <string>
 
 #include "builtin_interfaces/msg/time.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
-#include "rclcpp/rclcpp.hpp"
-#include "sensor_msgs/msg/point_cloud2.hpp"
-#include "nav_msgs/msg/odometry.hpp"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "localization_core.h"
+#include "nav_msgs/msg/odometry.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/point_cloud2.hpp"
 
+#include <pcl/filters/voxel_grid.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl_conversions/pcl_conversions.h>
 #include <pcl/registration/ndt.h>
-#include <pcl/filters/voxel_grid.h>
+#include <pcl_conversions/pcl_conversions.h>
 
 #include <tf2/LinearMath/Transform.h>
-#include <tf2_ros/transform_broadcaster.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2_ros/transform_broadcaster.h>
 
 using PointType = pcl::PointXYZ;
 
@@ -33,56 +36,90 @@ public:
   ~LocalizationNode();
 
 private:
-  // Callbacks
+  struct ScanMetrics
+  {
+    ndt_localization::DecisionCode decision =
+      ndt_localization::DecisionCode::NONE;
+    bool accepted = false;
+    bool converged = false;
+    double conversion_ms = 0.0;
+    double local_map_ms = 0.0;
+    double matcher_ms = 0.0;
+    double validation_ms = 0.0;
+    double total_ms = 0.0;
+    double input_age_ms = 0.0;
+    double odometry_before_gap_ms = 0.0;
+    double odometry_after_gap_ms = 0.0;
+    double translation_delta_m = std::numeric_limits<double>::quiet_NaN();
+    double rotation_delta_deg = std::numeric_limits<double>::quiet_NaN();
+    double fitness_score = std::numeric_limits<double>::quiet_NaN();
+    std::size_t raw_scan_points = 0;
+    std::size_t filtered_scan_points = 0;
+    int iterations = 0;
+  };
+
   void mapCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
   void scanCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
-  void initialPoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg);
-  pcl::PointCloud<PointType>::Ptr downsampleCloud(
-      const pcl::PointCloud<PointType>::Ptr& cloud, double leaf_size);
-  void publishScanDiagnostic(
-      const builtin_interfaces::msg::Time& stamp,
-      const std::string& decision,
-      bool accepted,
-      double conversion_ms,
-      double matcher_ms,
-      double validation_ms,
-      double total_ms,
-      double input_age_ms,
-      std::size_t raw_scan_points,
-      std::size_t filtered_scan_points,
-      int iterations,
-      bool converged,
-      double fitness_score);
+  void initialPoseCallback(
+    const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg);
 
-  // ROS
+  pcl::PointCloud<PointType>::Ptr downsampleCloud(
+    const pcl::PointCloud<PointType>::Ptr & cloud,
+    double leaf_size);
+  ndt_localization::DecisionCode validateTimestamp(
+    const builtin_interfaces::msg::Time & stamp,
+    double maximum_age_seconds,
+    ndt_localization::DecisionCode invalid_code,
+    ndt_localization::DecisionCode stale_code,
+    ndt_localization::DecisionCode future_code,
+    double * age_ms) const;
+  void publishMapPrediction(
+    const nav_msgs::msg::Odometry & odometry,
+    const Eigen::Isometry3d & odom_to_base,
+    const Eigen::Isometry3d & map_to_odom);
+  void publishScanDiagnostic(
+    const builtin_interfaces::msg::Time & stamp,
+    const ScanMetrics & metrics);
+  void publishStateDiagnostic(
+    const builtin_interfaces::msg::Time & stamp,
+    ndt_localization::DecisionCode code);
+  void beginInitialization(
+    const builtin_interfaces::msg::Time & stamp,
+    const Eigen::Isometry3d & initial_pose,
+    const Eigen::Isometry3d & synchronized_odometry);
+  void tryStartPendingInitialization();
+  void processPendingScan();
+
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr map_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr scan_sub_;
-  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initial_pose_sub_;
+  rclcpp::Subscription<
+    geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
+    initial_pose_sub_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_;
-  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr scan_diagnostic_pub_;
-
+  rclcpp::Publisher<
+    diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostic_pub_;
+  rclcpp::CallbackGroup::SharedPtr odometry_callback_group_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
-  // Data
   pcl::PointCloud<PointType>::Ptr global_map_;
   pcl::NormalDistributionsTransform<PointType, PointType> ndt_;
 
-  // State
-  Eigen::Matrix4f map_to_odom_;   // map -> odom
-  Eigen::Matrix4f odom_to_base_;  // (current) odom -> base_link
   bool map_initialized_ = false;
-  bool initial_pose_received_ = false;
   std::size_t raw_map_points_ = 0;
+  std::mutex odometry_mutex_;
+  std::mutex pending_mutex_;
+  std::mutex scan_mutex_;
+  std::unique_ptr<ndt_localization::OdometryBuffer> odometry_buffer_;
+  std::unique_ptr<ndt_localization::LocalizationStateMachine> state_machine_;
+  bool initial_pose_waiting_for_odometry_ = false;
+  builtin_interfaces::msg::Time pending_initial_pose_stamp_;
+  Eigen::Isometry3d pending_initial_pose_ = Eigen::Isometry3d::Identity();
+  sensor_msgs::msg::PointCloud2::ConstSharedPtr pending_scan_;
+  std::int64_t initialization_stamp_ns_ = 0;
 
-  // Buffers
-  std::mutex mutex_;
-  nav_msgs::msg::Odometry latest_odom_;
-  bool has_odom_ = false;
-
-  // Parameters
   std::string global_frame_id_;
   std::string odom_frame_id_;
   std::string base_frame_id_;
@@ -95,4 +132,23 @@ private:
   bool ndt_log_runtime_;
   bool ndt_compute_fitness_score_;
   bool publish_scan_diagnostics_;
+
+  double odometry_buffer_duration_seconds_;
+  int odometry_buffer_max_samples_;
+  double maximum_odometry_interpolation_gap_seconds_;
+  double maximum_odometry_age_seconds_;
+  double maximum_scan_age_seconds_;
+  double maximum_initial_pose_age_seconds_;
+  double future_tolerance_seconds_;
+  double quaternion_norm_tolerance_;
+  double covariance_symmetry_tolerance_;
+  double covariance_psd_tolerance_;
+  double maximum_initial_position_stddev_m_;
+  double maximum_initial_yaw_stddev_deg_;
+  int initialization_confirmation_scans_;
+  double maximum_result_translation_delta_m_;
+  double maximum_result_rotation_delta_deg_;
+  double maximum_confirmation_translation_delta_m_;
+  double maximum_confirmation_rotation_delta_deg_;
+  int maximum_consecutive_rejections_;
 };

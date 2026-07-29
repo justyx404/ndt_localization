@@ -1,8 +1,9 @@
 # Robust and Bounded-Latency Localization Plan
 
-Status: Phase 0 complete; Phase 1 not started
+Status: Phases 0 and 1 complete; Phase 2 not started
 Date: 2026-07-24
 Phase 0 completed: 2026-07-29
+Phase 1 completed: 2026-07-29
 Package: `ndt_localization`
 
 ## 1. Objective
@@ -90,9 +91,10 @@ Recorded `map -> odom_lidar`, `/odometry_map`, and `/initialpose` are reference-
 
 The reference trajectory was produced by the existing localization system, so it is regression/pseudo-ground-truth rather than independent survey-grade ground truth. It is adequate for comparing convergence basins, trajectory consistency, correction jumps, recovery behavior, and runtime. Any claimed absolute accuracy must retain this limitation.
 
-## 5. Current implementation risks
+## 5. Phase 0 implementation risks
 
-The current implementation in [`src/localization.cpp`](src/localization.cpp) has several behaviors that must be addressed:
+At the Phase 0 baseline, [`src/localization.cpp`](src/localization.cpp) had
+several behaviors that the later phases must address:
 
 - `/initialpose` is accepted directly without registration verification.
 - Initial pose covariance is ignored.

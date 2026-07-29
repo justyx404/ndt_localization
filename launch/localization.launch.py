@@ -8,7 +8,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     # Declare launch arguments
     odom_frame_id_arg = DeclareLaunchArgument(
-        "odom_frame_id", default_value="camera_init", description="Odometry frame ID"
+        "odom_frame_id", default_value="odom_lidar", description="Odometry frame ID"
     )
 
     base_frame_id_arg = DeclareLaunchArgument(
