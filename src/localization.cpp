@@ -15,6 +15,8 @@
 namespace
 {
 
+constexpr double kPi = 3.14159265358979323846;
+
 diagnostic_msgs::msg::KeyValue keyValue(
   const std::string & key,
   const std::string & value)
@@ -163,6 +165,56 @@ LocalizationNode::LocalizationNode()
     "localization.max_confirmation_rotation_delta_deg", 10.0);
   this->declare_parameter<int>(
     "localization.max_consecutive_rejections", 10);
+  this->declare_parameter<double>(
+    "localization.initialization_timeout_ms", 2000.0);
+  this->declare_parameter<double>(
+    "localization.initialization_confirmation_reserve_ms", 350.0);
+  this->declare_parameter<double>(
+    "localization.initialization_stddev_multiplier", 2.5);
+  this->declare_parameter<double>(
+    "localization.initialization_min_translation_span_m", 1.0);
+  this->declare_parameter<double>(
+    "localization.initialization_max_translation_span_m", 10.0);
+  this->declare_parameter<double>(
+    "localization.initialization_min_yaw_span_deg", 15.0);
+  this->declare_parameter<double>(
+    "localization.initialization_max_yaw_span_deg", 180.0);
+  this->declare_parameter<double>(
+    "localization.recovery_translation_span_m", 5.0);
+  this->declare_parameter<double>(
+    "localization.recovery_yaw_span_deg", 90.0);
+  this->declare_parameter<double>(
+    "localization.relocalization_retry_delay_ms", 500.0);
+  this->declare_parameter<int>(
+    "localization.initialization_max_hypotheses", 65);
+  this->declare_parameter<double>(
+    "localization.initialization_coarse_map_leaf_size_m", 0.5);
+  this->declare_parameter<double>(
+    "localization.initialization_coarse_scan_leaf_size_m", 0.4);
+  this->declare_parameter<int>(
+    "localization.initialization_max_coarse_scan_points", 2000);
+  this->declare_parameter<double>(
+    "localization.initialization_coarse_resolution_m", 2.0);
+  this->declare_parameter<double>(
+    "localization.initialization_coarse_step_size_m", 0.2);
+  this->declare_parameter<double>(
+    "localization.initialization_coarse_trans_epsilon", 0.05);
+  this->declare_parameter<int>(
+    "localization.initialization_coarse_max_iter", 8);
+  this->declare_parameter<int>(
+    "localization.initialization_refinement_candidates", 3);
+  this->declare_parameter<double>(
+    "localization.initialization_refinement_reserve_ms", 250.0);
+  this->declare_parameter<double>(
+    "localization.initialization_fitness_max_range_m", 2.0);
+  this->declare_parameter<double>(
+    "localization.initialization_max_fitness_score", 0.5);
+  this->declare_parameter<double>(
+    "localization.initialization_min_score_margin", 0.01);
+  this->declare_parameter<double>(
+    "localization.initialization_distinct_translation_m", 0.5);
+  this->declare_parameter<double>(
+    "localization.initialization_distinct_rotation_deg", 5.0);
 
   this->get_parameter("odom_frame_id", this->odom_frame_id_);
   this->get_parameter("base_frame_id", this->base_frame_id_);
@@ -257,6 +309,81 @@ LocalizationNode::LocalizationNode()
   this->get_parameter(
     "localization.max_consecutive_rejections",
     this->maximum_consecutive_rejections_);
+  this->get_parameter(
+    "localization.initialization_timeout_ms",
+    this->initialization_timeout_ms_);
+  this->get_parameter(
+    "localization.initialization_confirmation_reserve_ms",
+    this->initialization_confirmation_reserve_ms_);
+  this->get_parameter(
+    "localization.initialization_stddev_multiplier",
+    this->initialization_stddev_multiplier_);
+  this->get_parameter(
+    "localization.initialization_min_translation_span_m",
+    this->initialization_minimum_translation_span_m_);
+  this->get_parameter(
+    "localization.initialization_max_translation_span_m",
+    this->initialization_maximum_translation_span_m_);
+  this->get_parameter(
+    "localization.initialization_min_yaw_span_deg",
+    this->initialization_minimum_yaw_span_deg_);
+  this->get_parameter(
+    "localization.initialization_max_yaw_span_deg",
+    this->initialization_maximum_yaw_span_deg_);
+  this->get_parameter(
+    "localization.recovery_translation_span_m",
+    this->recovery_translation_span_m_);
+  this->get_parameter(
+    "localization.recovery_yaw_span_deg",
+    this->recovery_yaw_span_deg_);
+  this->get_parameter(
+    "localization.relocalization_retry_delay_ms",
+    this->relocalization_retry_delay_ms_);
+  this->get_parameter(
+    "localization.initialization_max_hypotheses",
+    this->initialization_maximum_hypotheses_);
+  this->get_parameter(
+    "localization.initialization_coarse_map_leaf_size_m",
+    this->initialization_coarse_map_leaf_size_m_);
+  this->get_parameter(
+    "localization.initialization_coarse_scan_leaf_size_m",
+    this->initialization_coarse_scan_leaf_size_m_);
+  this->get_parameter(
+    "localization.initialization_max_coarse_scan_points",
+    this->initialization_maximum_coarse_scan_points_);
+  this->get_parameter(
+    "localization.initialization_coarse_resolution_m",
+    this->initialization_coarse_resolution_m_);
+  this->get_parameter(
+    "localization.initialization_coarse_step_size_m",
+    this->initialization_coarse_step_size_m_);
+  this->get_parameter(
+    "localization.initialization_coarse_trans_epsilon",
+    this->initialization_coarse_transformation_epsilon_);
+  this->get_parameter(
+    "localization.initialization_coarse_max_iter",
+    this->initialization_coarse_maximum_iterations_);
+  this->get_parameter(
+    "localization.initialization_refinement_candidates",
+    this->initialization_refinement_candidates_);
+  this->get_parameter(
+    "localization.initialization_refinement_reserve_ms",
+    this->initialization_refinement_reserve_ms_);
+  this->get_parameter(
+    "localization.initialization_fitness_max_range_m",
+    this->initialization_fitness_max_range_m_);
+  this->get_parameter(
+    "localization.initialization_max_fitness_score",
+    this->initialization_maximum_fitness_score_);
+  this->get_parameter(
+    "localization.initialization_min_score_margin",
+    this->initialization_minimum_score_margin_);
+  this->get_parameter(
+    "localization.initialization_distinct_translation_m",
+    this->initialization_distinct_translation_m_);
+  this->get_parameter(
+    "localization.initialization_distinct_rotation_deg",
+    this->initialization_distinct_rotation_deg_);
 
   this->global_frame_id_ = normalizedFrame(this->global_frame_id_);
   this->odom_frame_id_ = normalizedFrame(this->odom_frame_id_);
@@ -296,7 +423,37 @@ LocalizationNode::LocalizationNode()
     this->registration_deadline_ms_ <= 0.0 ||
     this->deadline_watchdog_margin_ms_ < 0.0 ||
     this->deadline_watchdog_margin_ms_ >=
-    this->registration_deadline_ms_)
+    this->registration_deadline_ms_ ||
+    this->initialization_timeout_ms_ <= 0.0 ||
+    this->initialization_confirmation_reserve_ms_ < 0.0 ||
+    this->initialization_refinement_reserve_ms_ < 0.0 ||
+    this->initialization_confirmation_reserve_ms_ +
+    this->initialization_refinement_reserve_ms_ >=
+    this->initialization_timeout_ms_ ||
+    this->initialization_stddev_multiplier_ <= 0.0 ||
+    this->initialization_minimum_translation_span_m_ < 0.0 ||
+    this->initialization_maximum_translation_span_m_ <
+    this->initialization_minimum_translation_span_m_ ||
+    this->initialization_minimum_yaw_span_deg_ < 0.0 ||
+    this->initialization_maximum_yaw_span_deg_ <
+    this->initialization_minimum_yaw_span_deg_ ||
+    this->recovery_translation_span_m_ <= 0.0 ||
+    this->recovery_yaw_span_deg_ <= 0.0 ||
+    this->relocalization_retry_delay_ms_ < 0.0 ||
+    this->initialization_maximum_hypotheses_ < 1 ||
+    this->initialization_coarse_map_leaf_size_m_ < 0.0 ||
+    this->initialization_coarse_scan_leaf_size_m_ < 0.0 ||
+    this->initialization_maximum_coarse_scan_points_ < 1 ||
+    this->initialization_coarse_resolution_m_ <= 0.0 ||
+    this->initialization_coarse_step_size_m_ <= 0.0 ||
+    this->initialization_coarse_transformation_epsilon_ <= 0.0 ||
+    this->initialization_coarse_maximum_iterations_ < 1 ||
+    this->initialization_refinement_candidates_ < 1 ||
+    this->initialization_fitness_max_range_m_ <= 0.0 ||
+    this->initialization_maximum_fitness_score_ < 0.0 ||
+    this->initialization_minimum_score_margin_ < 0.0 ||
+    this->initialization_distinct_translation_m_ <= 0.0 ||
+    this->initialization_distinct_rotation_deg_ <= 0.0)
   {
     throw std::invalid_argument("invalid localization parameters");
   }
@@ -308,6 +465,55 @@ LocalizationNode::LocalizationNode()
   this->state_machine_ =
     std::make_unique<ndt_localization::LocalizationStateMachine>(
     static_cast<std::size_t>(this->initialization_confirmation_scans_));
+  ndt_localization::RobustInitializer::Config initializer_config;
+  initializer_config.local_map_radius_m = this->local_map_radius_m_;
+  initializer_config.maximum_local_map_points =
+    static_cast<std::size_t>(this->maximum_local_map_points_);
+  initializer_config.minimum_local_map_points =
+    static_cast<std::size_t>(this->minimum_local_map_points_);
+  initializer_config.maximum_hypotheses =
+    static_cast<std::size_t>(this->initialization_maximum_hypotheses_);
+  initializer_config.coarse_map_leaf_size_m =
+    this->initialization_coarse_map_leaf_size_m_;
+  initializer_config.coarse_scan_leaf_size_m =
+    this->initialization_coarse_scan_leaf_size_m_;
+  initializer_config.maximum_coarse_scan_points =
+    static_cast<std::size_t>(
+    this->initialization_maximum_coarse_scan_points_);
+  initializer_config.coarse_resolution_m =
+    this->initialization_coarse_resolution_m_;
+  initializer_config.coarse_step_size_m =
+    this->initialization_coarse_step_size_m_;
+  initializer_config.coarse_transformation_epsilon =
+    this->initialization_coarse_transformation_epsilon_;
+  initializer_config.coarse_maximum_iterations =
+    this->initialization_coarse_maximum_iterations_;
+  initializer_config.refinement_scan_leaf_size_m =
+    this->ndt_scan_leaf_size_;
+  initializer_config.maximum_refinement_scan_points =
+    static_cast<std::size_t>(this->maximum_scan_points_);
+  initializer_config.refinement_resolution_m = this->ndt_resolution_;
+  initializer_config.refinement_step_size_m = this->ndt_step_size_;
+  initializer_config.refinement_transformation_epsilon =
+    this->ndt_trans_epsilon_;
+  initializer_config.refinement_maximum_iterations = this->ndt_max_iter_;
+  initializer_config.refinement_candidates =
+    static_cast<std::size_t>(this->initialization_refinement_candidates_);
+  initializer_config.refinement_reserve_ms =
+    this->initialization_refinement_reserve_ms_;
+  initializer_config.fitness_max_range_m =
+    this->initialization_fitness_max_range_m_;
+  initializer_config.maximum_fitness_score =
+    this->initialization_maximum_fitness_score_;
+  initializer_config.minimum_score_margin =
+    this->initialization_minimum_score_margin_;
+  initializer_config.distinct_translation_m =
+    this->initialization_distinct_translation_m_;
+  initializer_config.distinct_rotation_deg =
+    this->initialization_distinct_rotation_deg_;
+  this->robust_initializer_ =
+    std::make_unique<ndt_localization::RobustInitializer>(
+    initializer_config);
   this->tf_broadcaster_ =
     std::make_unique<tf2_ros::TransformBroadcaster>(*this);
   this->global_map_.reset(new pcl::PointCloud<PointType>());
@@ -354,8 +560,16 @@ LocalizationNode::LocalizationNode()
   this->diagnostic_pub_ =
     this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
     "/localization/scan_diagnostics", 10);
+  this->relocalization_service_ =
+    this->create_service<std_srvs::srv::Trigger>(
+    "/localization/trigger_relocalization",
+    std::bind(
+      &LocalizationNode::triggerRelocalizationCallback, this,
+      std::placeholders::_1, std::placeholders::_2));
   this->registration_worker_ =
     std::thread(&LocalizationNode::registrationWorkerLoop, this);
+  this->initialization_worker_ =
+    std::thread(&LocalizationNode::initializationWorkerLoop, this);
   this->deadline_worker_ =
     std::thread(&LocalizationNode::deadlineWorkerLoop, this);
 }
@@ -369,6 +583,9 @@ LocalizationNode::~LocalizationNode()
   this->registration_cv_.notify_all();
   if (this->registration_worker_.joinable()) {
     this->registration_worker_.join();
+  }
+  if (this->initialization_worker_.joinable()) {
+    this->initialization_worker_.join();
   }
   if (this->deadline_worker_.joinable()) {
     this->deadline_worker_.join();
@@ -416,6 +633,7 @@ void LocalizationNode::mapCallback(
   this->ndt_.setTransformationEpsilon(this->ndt_trans_epsilon_);
   this->ndt_.setMaximumIterations(this->ndt_max_iter_);
   this->map_kdtree_->setInputCloud(this->global_map_);
+  this->robust_initializer_->setMap(this->global_map_);
   this->map_initialized_.store(true, std::memory_order_release);
   RCLCPP_INFO(
     this->get_logger(),
@@ -636,24 +854,29 @@ void LocalizationNode::scanCallback(
       msg, metrics, ndt_localization::DecisionCode::MAP_UNAVAILABLE);
     return;
   }
-  if (this->state_machine_->state() ==
-    ndt_localization::LocalizationState::UNINITIALIZED)
-  {
+  if (metrics.raw_scan_points == 0) {
+    this->publishImmediateScanRejection(
+      msg, metrics, ndt_localization::DecisionCode::SCAN_EMPTY);
+    return;
+  }
+
+  ndt_localization::LocalizationState state =
+    this->state_machine_->state();
+  if (state == ndt_localization::LocalizationState::UNINITIALIZED) {
     this->publishImmediateScanRejection(
       msg, metrics, ndt_localization::DecisionCode::STATE_UNINITIALIZED);
     return;
   }
-  if (this->state_machine_->state() ==
-    ndt_localization::LocalizationState::LOST ||
-    this->state_machine_->state() ==
-    ndt_localization::LocalizationState::RELOCALIZING)
-  {
-    this->publishImmediateScanRejection(
-      msg, metrics, ndt_localization::DecisionCode::STATE_LOST);
-    return;
+  if (state == ndt_localization::LocalizationState::LOST) {
+    if (!this->startRelocalization(msg->header.stamp)) {
+      this->publishImmediateScanRejection(
+        msg, metrics, ndt_localization::DecisionCode::STATE_LOST);
+      return;
+    }
+    state = this->state_machine_->state();
   }
-  if (this->state_machine_->state() ==
-    ndt_localization::LocalizationState::INITIALIZING)
+  if (state == ndt_localization::LocalizationState::INITIALIZING ||
+    state == ndt_localization::LocalizationState::RELOCALIZING)
   {
     const ndt_localization::ValidationResult sequence_validation =
       ndt_localization::validateInitializationScanTimestamp(
@@ -664,10 +887,18 @@ void LocalizationNode::scanCallback(
         msg, metrics, sequence_validation.code);
       return;
     }
-  }
-  if (metrics.raw_scan_points == 0) {
-    this->publishImmediateScanRejection(
-      msg, metrics, ndt_localization::DecisionCode::SCAN_EMPTY);
+    bool search_required = false;
+    {
+      std::lock_guard<std::mutex> lock(this->registration_mutex_);
+      search_required =
+        this->initialization_attempt_active_ &&
+        this->initialization_search_required_;
+    }
+    if (search_required) {
+      this->enqueueInitializationScan(msg, received_at);
+    } else {
+      this->enqueueScan(msg, received_at);
+    }
     return;
   }
   this->enqueueScan(msg, received_at);
@@ -700,7 +931,9 @@ bool LocalizationNode::applyRejectionStateLocked(
   bool registration_rejection)
 {
   if (this->state_machine_->state() ==
-    ndt_localization::LocalizationState::INITIALIZING)
+    ndt_localization::LocalizationState::INITIALIZING ||
+    this->state_machine_->state() ==
+    ndt_localization::LocalizationState::RELOCALIZING)
   {
     this->state_machine_->rejectInitializationCandidate();
     return false;
@@ -750,6 +983,49 @@ void LocalizationNode::enqueueScan(
   }
   this->publishSupersededTasks(superseded);
   this->registration_cv_.notify_all();
+}
+
+void LocalizationNode::enqueueInitializationScan(
+  const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
+  const std::chrono::steady_clock::time_point & received_at)
+{
+  std::shared_ptr<InitializationTask> task =
+    std::make_shared<InitializationTask>();
+  task->message = msg;
+  task->received_at = received_at;
+  bool queued = false;
+  {
+    std::lock_guard<std::mutex> lock(this->registration_mutex_);
+    if (this->initialization_attempt_active_ &&
+      this->initialization_search_required_)
+    {
+      task->generation = this->initialization_generation_;
+      task->bounds = this->initialization_search_bounds_;
+      task->recovery = this->initialization_recovery_;
+      task->search_deadline =
+        this->initialization_attempt_deadline_ -
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double, std::milli>(
+          this->initialization_confirmation_reserve_ms_));
+      this->pending_initialization_task_ = task;
+      queued = true;
+    }
+  }
+
+  ScanMetrics metrics;
+  metrics.raw_scan_points =
+    static_cast<std::size_t>(msg->width) * msg->height;
+  metrics.generation = task->generation;
+  metrics.input_age_ms =
+    (this->now() - rclcpp::Time(msg->header.stamp)).seconds() * 1000.0;
+  metrics.total_ms = elapsedMilliseconds(received_at);
+  metrics.decision = queued ?
+    ndt_localization::DecisionCode::INITIALIZATION_SEARCH_PENDING :
+    ndt_localization::DecisionCode::RESULT_GENERATION_STALE;
+  this->publishScanDiagnostic(msg->header.stamp, metrics);
+  if (queued) {
+    this->registration_cv_.notify_all();
+  }
 }
 
 void LocalizationNode::publishSupersededTasks(
@@ -828,6 +1104,192 @@ void LocalizationNode::registrationWorkerLoop()
   }
 }
 
+void LocalizationNode::initializationWorkerLoop()
+{
+  while (true) {
+    std::shared_ptr<InitializationTask> task;
+    {
+      std::unique_lock<std::mutex> lock(this->registration_mutex_);
+      this->registration_cv_.wait(
+        lock,
+        [this]()
+        {
+          return this->stop_registration_threads_ ||
+                 this->pending_initialization_task_ != nullptr;
+        });
+      if (this->stop_registration_threads_) {
+        return;
+      }
+      task = this->pending_initialization_task_;
+      this->pending_initialization_task_.reset();
+      this->active_initialization_task_ = task;
+    }
+    this->processInitializationTask(task);
+  }
+}
+
+void LocalizationNode::processInitializationTask(
+  const std::shared_ptr<InitializationTask> & task)
+{
+  InitializationMetrics metrics;
+  metrics.generation = task->generation;
+  metrics.recovery = task->recovery;
+  metrics.translation_span_m = task->bounds.translation_span_m;
+  metrics.yaw_span_deg = task->bounds.yaw_span_deg;
+
+  ndt_localization::OdometryLookup synchronized_odometry;
+  {
+    std::lock_guard<std::mutex> lock(this->odometry_mutex_);
+    synchronized_odometry = this->odometry_buffer_->lookup(
+      rclcpp::Time(task->message->header.stamp).nanoseconds(),
+      this->maximum_odometry_interpolation_gap_seconds_);
+  }
+  if (!synchronized_odometry.success) {
+    {
+      std::lock_guard<std::mutex> lock(this->registration_mutex_);
+      if (this->active_initialization_task_ == task) {
+        this->active_initialization_task_.reset();
+      }
+    }
+    metrics.decision = synchronized_odometry.code;
+    metrics.total_ms = elapsedMilliseconds(task->received_at);
+    this->publishInitializationDiagnostic(
+      task->message->header.stamp, metrics);
+    this->registration_cv_.notify_all();
+    return;
+  }
+
+  Eigen::Isometry3d prior_correction = Eigen::Isometry3d::Identity();
+  bool current = false;
+  {
+    std::lock_guard<std::mutex> lock(this->registration_mutex_);
+    current =
+      this->initialization_attempt_active_ &&
+      this->initialization_search_required_ &&
+      task->generation == this->initialization_generation_;
+    if (current) {
+      prior_correction = this->state_machine_->pendingCorrection();
+    }
+  }
+  if (!current) {
+    {
+      std::lock_guard<std::mutex> lock(this->registration_mutex_);
+      if (this->active_initialization_task_ == task) {
+        this->active_initialization_task_.reset();
+      }
+    }
+    metrics.decision =
+      ndt_localization::DecisionCode::RESULT_GENERATION_STALE;
+    metrics.total_ms = elapsedMilliseconds(task->received_at);
+    this->publishInitializationDiagnostic(
+      task->message->header.stamp, metrics);
+    return;
+  }
+
+  pcl::PointCloud<PointType>::Ptr scan(
+    new pcl::PointCloud<PointType>());
+  pcl::fromROSMsg(*task->message, *scan);
+  ndt_localization::RobustInitializer::Request request;
+  request.scan = scan;
+  request.prior_pose = prior_correction * synchronized_odometry.pose;
+  request.bounds = task->bounds;
+  request.deadline = task->search_deadline;
+  const ndt_localization::RobustInitializer::Result result =
+    this->robust_initializer_->search(request);
+  metrics.success = result.success;
+  metrics.ambiguous = result.ambiguous;
+  metrics.hypotheses = result.hypotheses;
+  metrics.evaluated = result.evaluated;
+  metrics.converged = result.converged;
+  metrics.refined = result.refined;
+  metrics.scan_points = result.scan_points;
+  metrics.target_points = result.target_points;
+  metrics.best_score = result.best_score;
+  metrics.second_score = result.second_score;
+  metrics.score_margin = result.score_margin;
+  metrics.coarse_ms = result.coarse_ms;
+  metrics.refinement_ms = result.refinement_ms;
+  metrics.total_ms = elapsedMilliseconds(task->received_at);
+
+  const Eigen::Isometry3d candidate_correction =
+    result.pose * synchronized_odometry.pose.inverse();
+  const ndt_localization::TransformValidation candidate_validation =
+    ndt_localization::validateTransformCandidate(
+    request.prior_pose, result.pose,
+    task->bounds.translation_span_m +
+    this->maximum_result_translation_delta_m_,
+    task->bounds.yaw_span_deg +
+    this->maximum_result_rotation_delta_deg_);
+  bool selected = false;
+  bool failed = false;
+  {
+    std::lock_guard<std::mutex> lock(this->registration_mutex_);
+    if (!this->initialization_attempt_active_ ||
+      task->generation != this->initialization_generation_ ||
+      std::chrono::steady_clock::now() >=
+      this->initialization_attempt_deadline_)
+    {
+      metrics.decision =
+        ndt_localization::DecisionCode::RESULT_GENERATION_STALE;
+    } else if (result.success && candidate_validation.valid &&
+      this->state_machine_->setInitializationCandidate(
+        candidate_correction))
+    {
+      selected = true;
+      this->initialization_search_required_ = false;
+      this->pending_initialization_task_.reset();
+      this->initialization_stamp_ns_.store(
+        rclcpp::Time(task->message->header.stamp).nanoseconds(),
+        std::memory_order_release);
+      metrics.decision = task->recovery ?
+        ndt_localization::DecisionCode::RELOCALIZATION_HYPOTHESIS_SELECTED :
+        ndt_localization::DecisionCode::INITIALIZATION_HYPOTHESIS_SELECTED;
+    } else {
+      failed = true;
+      this->initialization_attempt_active_ = false;
+      this->initialization_search_required_ = false;
+      this->pending_initialization_task_.reset();
+      ++this->initialization_generation_;
+      this->state_machine_->failInitializationAttempt();
+      if (task->recovery) {
+        this->next_relocalization_attempt_ =
+          std::chrono::steady_clock::now() +
+          std::chrono::duration_cast<
+          std::chrono::steady_clock::duration>(
+          std::chrono::duration<double, std::milli>(
+            this->relocalization_retry_delay_ms_));
+      }
+      if (!candidate_validation.valid && result.success) {
+        metrics.decision = candidate_validation.code;
+      } else if (task->recovery) {
+        if (result.ambiguous) {
+          metrics.decision =
+            ndt_localization::DecisionCode::RELOCALIZATION_AMBIGUOUS;
+        } else if (result.timed_out) {
+          metrics.decision =
+            ndt_localization::DecisionCode::RELOCALIZATION_SEARCH_TIMEOUT;
+        } else {
+          metrics.decision =
+            ndt_localization::DecisionCode::RELOCALIZATION_SEARCH_FAILED;
+        }
+      } else {
+        metrics.decision = result.code;
+      }
+    }
+    if (this->active_initialization_task_ == task) {
+      this->active_initialization_task_.reset();
+    }
+  }
+  this->registration_cv_.notify_all();
+  metrics.success = selected;
+  this->publishInitializationDiagnostic(
+    task->message->header.stamp, metrics);
+  if (selected || failed) {
+    this->publishStateDiagnostic(
+      task->message->header.stamp, metrics.decision);
+  }
+}
+
 bool LocalizationNode::finalizeRejectedTask(
   const std::shared_ptr<ScanTask> & task,
   ScanMetrics metrics,
@@ -878,6 +1340,7 @@ bool LocalizationNode::finalizeRejectedTask(
     this->publishStateDiagnostic(
       task->message->header.stamp,
       ndt_localization::DecisionCode::TRACKING_LOST);
+    this->startRelocalization(task->message->header.stamp);
   }
   return true;
 }
@@ -947,7 +1410,10 @@ void LocalizationNode::processScanTask(
     }
     processing_state = this->state_machine_->state();
     correction_guess =
-      processing_state == ndt_localization::LocalizationState::INITIALIZING ?
+      (processing_state ==
+      ndt_localization::LocalizationState::INITIALIZING ||
+      processing_state ==
+      ndt_localization::LocalizationState::RELOCALIZING) ?
       this->state_machine_->pendingCorrection() :
       this->state_machine_->correction();
   }
@@ -959,9 +1425,7 @@ void LocalizationNode::processScanTask(
       false);
     return;
   }
-  if (processing_state == ndt_localization::LocalizationState::LOST ||
-    processing_state == ndt_localization::LocalizationState::RELOCALIZING)
-  {
+  if (processing_state == ndt_localization::LocalizationState::LOST) {
     this->finalizeRejectedTask(
       task, metrics, ndt_localization::DecisionCode::STATE_LOST, false);
     return;
@@ -1075,13 +1539,14 @@ void LocalizationNode::processScanTask(
     }
     return;
   }
-
   const Eigen::Isometry3d candidate_correction =
     optimized_pose * synchronized_odometry.pose.inverse();
   bool publish_scan = false;
   bool publish_late = false;
   bool entered_lost = false;
   bool initialization_confirmed = false;
+  ndt_localization::DecisionCode confirmation_code =
+    ndt_localization::DecisionCode::NONE;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
     const auto now = std::chrono::steady_clock::now();
@@ -1093,6 +1558,8 @@ void LocalizationNode::processScanTask(
       this->state_machine_->state();
     const bool is_initializing =
       decision_state == ndt_localization::LocalizationState::INITIALIZING;
+    const bool is_relocalizing =
+      decision_state == ndt_localization::LocalizationState::RELOCALIZING;
     const bool is_tracking =
       decision_state == ndt_localization::LocalizationState::TRACKING;
     if (task->decided) {
@@ -1112,7 +1579,7 @@ void LocalizationNode::processScanTask(
       this->applyRejectionStateLocked(false);
       publish_scan = true;
       publish_late = true;
-    } else if (is_initializing) {
+    } else if (is_initializing || is_relocalizing) {
       const ndt_localization::InitializationObservation observation =
         this->state_machine_->observeInitializationCorrection(
         candidate_correction,
@@ -1124,6 +1591,13 @@ void LocalizationNode::processScanTask(
       metrics.rotation_delta_deg = observation.rotation_delta_deg;
       metrics.accepted = observation.confirmed;
       initialization_confirmed = observation.confirmed;
+      confirmation_code = observation.code;
+      if (observation.confirmed) {
+        this->initialization_attempt_active_ = false;
+        this->initialization_search_required_ = false;
+        this->pending_initialization_task_.reset();
+        ++this->initialization_generation_;
+      }
       publish_scan = true;
     } else if (is_tracking) {
       task->decided = true;
@@ -1163,12 +1637,13 @@ void LocalizationNode::processScanTask(
   if (initialization_confirmed) {
     this->publishStateDiagnostic(
       task->message->header.stamp,
-      ndt_localization::DecisionCode::INITIALIZATION_CONFIRMED);
+      confirmation_code);
   }
   if (entered_lost) {
     this->publishStateDiagnostic(
       task->message->header.stamp,
       ndt_localization::DecisionCode::TRACKING_LOST);
+    this->startRelocalization(task->message->header.stamp);
   }
 
   if (this->ndt_log_runtime_) {
@@ -1191,6 +1666,10 @@ void LocalizationNode::deadlineWorkerLoop()
 {
   while (true) {
     std::vector<std::pair<std::shared_ptr<ScanTask>, bool>> expired;
+    std::vector<std::shared_ptr<ScanTask>> invalidated;
+    bool initialization_expired = false;
+    bool recovery_expired = false;
+    InitializationMetrics initialization_metrics;
     {
       std::unique_lock<std::mutex> lock(this->registration_mutex_);
       if (this->stop_registration_threads_) {
@@ -1204,6 +1683,10 @@ void LocalizationNode::deadlineWorkerLoop()
         if (task && !task->decided) {
           earliest = std::min(earliest, task->deadline);
         }
+      }
+      if (this->initialization_attempt_active_) {
+        earliest = std::min(
+          earliest, this->initialization_attempt_deadline_);
       }
       if (earliest == std::chrono::steady_clock::time_point::max()) {
         this->registration_cv_.wait(lock);
@@ -1231,8 +1714,49 @@ void LocalizationNode::deadlineWorkerLoop()
         };
       expire(this->pending_scan_task_);
       expire(this->active_scan_task_);
+      if (this->initialization_attempt_active_ &&
+        std::chrono::steady_clock::now() >=
+        this->initialization_attempt_deadline_)
+      {
+        initialization_expired = true;
+        recovery_expired = this->initialization_recovery_;
+        initialization_metrics.generation =
+          this->initialization_generation_;
+        initialization_metrics.recovery = recovery_expired;
+        initialization_metrics.translation_span_m =
+          this->initialization_search_bounds_.translation_span_m;
+        initialization_metrics.yaw_span_deg =
+          this->initialization_search_bounds_.yaw_span_deg;
+        initialization_metrics.total_ms = this->initialization_timeout_ms_;
+        initialization_metrics.decision = recovery_expired ?
+          ndt_localization::DecisionCode::RELOCALIZATION_SEARCH_TIMEOUT :
+          ndt_localization::DecisionCode::INITIALIZATION_SEARCH_TIMEOUT;
+        this->initialization_attempt_active_ = false;
+        this->initialization_search_required_ = false;
+        ++this->initialization_generation_;
+        this->pending_initialization_task_.reset();
+        this->active_initialization_task_.reset();
+        this->state_machine_->failInitializationAttempt();
+        invalidated = this->invalidateRegistrationWorkLocked();
+        if (recovery_expired) {
+          this->next_relocalization_attempt_ =
+            std::chrono::steady_clock::now() +
+            std::chrono::duration_cast<
+            std::chrono::steady_clock::duration>(
+            std::chrono::duration<double, std::milli>(
+              this->relocalization_retry_delay_ms_));
+        }
+      }
     }
     this->registration_cv_.notify_all();
+    this->publishSupersededTasks(invalidated);
+    if (initialization_expired) {
+      const builtin_interfaces::msg::Time stamp = this->now();
+      this->publishInitializationDiagnostic(
+        stamp, initialization_metrics);
+      this->publishStateDiagnostic(
+        stamp, initialization_metrics.decision);
+    }
     for (const auto & item : expired) {
       const auto & task = item.first;
       ScanMetrics metrics;
@@ -1261,6 +1785,7 @@ void LocalizationNode::deadlineWorkerLoop()
         this->publishStateDiagnostic(
           task->message->header.stamp,
           ndt_localization::DecisionCode::TRACKING_LOST);
+        this->startRelocalization(task->message->header.stamp);
       }
     }
   }
@@ -1362,6 +1887,63 @@ void LocalizationNode::publishScanDiagnostic(
   this->diagnostic_pub_->publish(message);
 }
 
+void LocalizationNode::publishInitializationDiagnostic(
+  const builtin_interfaces::msg::Time & stamp,
+  const InitializationMetrics & metrics)
+{
+  if (!this->publish_scan_diagnostics_) {
+    return;
+  }
+  diagnostic_msgs::msg::DiagnosticArray message;
+  message.header.stamp = stamp;
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.level = metrics.success ?
+    diagnostic_msgs::msg::DiagnosticStatus::OK :
+    metrics.ambiguous ?
+    diagnostic_msgs::msg::DiagnosticStatus::WARN :
+    diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+  status.name = "ndt_localization/initialization_search";
+  status.hardware_id = "localization_node";
+  status.message = ndt_localization::toString(metrics.decision);
+  status.values = {
+    keyValue("decision", status.message),
+    keyValue("success", metrics.success ? "true" : "false"),
+    keyValue("ambiguous", metrics.ambiguous ? "true" : "false"),
+    keyValue("recovery", metrics.recovery ? "true" : "false"),
+    keyValue(
+      "state",
+      ndt_localization::toString(this->state_machine_->state())),
+    numericKeyValue("generation", metrics.generation),
+    numericKeyValue("hypotheses", metrics.hypotheses),
+    numericKeyValue("evaluated", metrics.evaluated),
+    numericKeyValue("converged", metrics.converged),
+    numericKeyValue("refined", metrics.refined),
+    numericKeyValue("scan_points", metrics.scan_points),
+    numericKeyValue("target_points", metrics.target_points),
+    numericKeyValue("best_score", metrics.best_score),
+    numericKeyValue("second_score", metrics.second_score),
+    numericKeyValue("score_margin", metrics.score_margin),
+    numericKeyValue("coarse_ms", metrics.coarse_ms),
+    numericKeyValue("refinement_ms", metrics.refinement_ms),
+    numericKeyValue("total_ms", metrics.total_ms),
+    numericKeyValue(
+      "translation_span_m", metrics.translation_span_m),
+    numericKeyValue("yaw_span_deg", metrics.yaw_span_deg),
+    numericKeyValue(
+      "initialization_deadline_ms", this->initialization_timeout_ms_),
+  };
+  message.status.push_back(std::move(status));
+  this->diagnostic_pub_->publish(message);
+  RCLCPP_INFO(
+    this->get_logger(),
+    "Initialization search generation %s: %s, %zu/%zu converged, "
+    "%zu refined, score %.6f, margin %.6f, %.3f ms",
+    std::to_string(metrics.generation).c_str(),
+    ndt_localization::toString(metrics.decision),
+    metrics.converged, metrics.evaluated, metrics.refined,
+    metrics.best_score, metrics.score_margin, metrics.total_ms);
+}
+
 void LocalizationNode::publishStateDiagnostic(
   const builtin_interfaces::msg::Time & stamp,
   ndt_localization::DecisionCode code)
@@ -1374,7 +1956,13 @@ void LocalizationNode::publishStateDiagnostic(
   diagnostic_msgs::msg::DiagnosticStatus status;
   const bool healthy =
     code == ndt_localization::DecisionCode::INITIALIZATION_STARTED ||
+    code ==
+    ndt_localization::DecisionCode::INITIALIZATION_HYPOTHESIS_SELECTED ||
     code == ndt_localization::DecisionCode::INITIALIZATION_CONFIRMED ||
+    code == ndt_localization::DecisionCode::RELOCALIZATION_STARTED ||
+    code ==
+    ndt_localization::DecisionCode::RELOCALIZATION_HYPOTHESIS_SELECTED ||
+    code == ndt_localization::DecisionCode::RELOCALIZATION_CONFIRMED ||
     code == ndt_localization::DecisionCode::TRACKING_ACCEPTED;
   const bool waiting =
     code ==
@@ -1480,6 +2068,21 @@ void LocalizationNode::initialPoseCallback(
       msg->header.stamp, pose_validation.code);
     return;
   }
+  const double position_stddev_m = std::sqrt(
+    std::max(
+      covariance[0],
+      std::max(covariance[7], covariance[14])));
+  const double yaw_stddev_deg =
+    std::sqrt(covariance[35]) * 180.0 / kPi;
+  const ndt_localization::InitializationSearchBounds search_bounds =
+    ndt_localization::initializationSearchBounds(
+    position_stddev_m,
+    yaw_stddev_deg,
+    this->initialization_stddev_multiplier_,
+    this->initialization_minimum_translation_span_m_,
+    this->initialization_maximum_translation_span_m_,
+    this->initialization_minimum_yaw_span_deg_,
+    this->initialization_maximum_yaw_span_deg_);
 
   ndt_localization::OdometryLookup synchronized_odometry;
   {
@@ -1501,6 +2104,7 @@ void LocalizationNode::initialPoseCallback(
       this->initial_pose_waiting_for_odometry_ = true;
       this->pending_initial_pose_stamp_ = msg->header.stamp;
       this->pending_initial_pose_ = initial_pose;
+      this->pending_initialization_search_bounds_ = search_bounds;
     }
     this->publishStateDiagnostic(
       msg->header.stamp,
@@ -1513,22 +2117,39 @@ void LocalizationNode::initialPoseCallback(
     return;
   }
   this->beginInitialization(
-    msg->header.stamp, initial_pose, synchronized_odometry.pose);
+    msg->header.stamp, initial_pose, synchronized_odometry.pose,
+    search_bounds);
 }
 
 void LocalizationNode::beginInitialization(
   const builtin_interfaces::msg::Time & stamp,
   const Eigen::Isometry3d & initial_pose,
-  const Eigen::Isometry3d & synchronized_odometry)
+  const Eigen::Isometry3d & synchronized_odometry,
+  const ndt_localization::InitializationSearchBounds & bounds)
 {
+  const Eigen::Isometry3d constrained_initial_pose =
+    ndt_localization::gravityConstrainedPose(
+    initial_pose, synchronized_odometry);
   const Eigen::Isometry3d prior_correction =
-    initial_pose * synchronized_odometry.inverse();
+    constrained_initial_pose * synchronized_odometry.inverse();
   std::vector<std::shared_ptr<ScanTask>> invalidated;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
     invalidated = this->invalidateRegistrationWorkLocked();
     this->initialization_stamp_ns_.store(
       rclcpp::Time(stamp).nanoseconds(), std::memory_order_release);
+    ++this->initialization_generation_;
+    this->initialization_attempt_active_ = true;
+    this->initialization_search_required_ = true;
+    this->initialization_recovery_ = false;
+    this->initialization_search_bounds_ = bounds;
+    this->initialization_attempt_deadline_ =
+      std::chrono::steady_clock::now() +
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      std::chrono::duration<double, std::milli>(
+        this->initialization_timeout_ms_));
+    this->pending_initialization_task_.reset();
+    this->active_initialization_task_.reset();
     this->state_machine_->beginInitialization(prior_correction);
   }
   {
@@ -1541,15 +2162,77 @@ void LocalizationNode::beginInitialization(
     stamp, ndt_localization::DecisionCode::INITIALIZATION_STARTED);
   RCLCPP_INFO(
     this->get_logger(),
-    "Accepted initial-pose prior at %.6f; waiting for %d confirmations",
+    "Accepted initial-pose prior at %.6f; searching %.2f m / %.1f deg "
+    "before %d confirmations",
     rclcpp::Time(stamp).seconds(),
+    bounds.translation_span_m, bounds.yaw_span_deg,
     this->initialization_confirmation_scans_);
+}
+
+bool LocalizationNode::startRelocalization(
+  const builtin_interfaces::msg::Time & stamp,
+  bool ignore_retry_delay)
+{
+  std::vector<std::shared_ptr<ScanTask>> invalidated;
+  {
+    std::lock_guard<std::mutex> lock(this->registration_mutex_);
+    const auto now = std::chrono::steady_clock::now();
+    if (!ignore_retry_delay && now < this->next_relocalization_attempt_) {
+      return false;
+    }
+    Eigen::Isometry3d correction = Eigen::Isometry3d::Identity();
+    if (!this->state_machine_->getValidCorrection(&correction)) {
+      return false;
+    }
+    invalidated = this->invalidateRegistrationWorkLocked();
+    ++this->initialization_generation_;
+    this->initialization_attempt_active_ = true;
+    this->initialization_search_required_ = true;
+    this->initialization_recovery_ = true;
+    this->initialization_search_bounds_.translation_span_m =
+      this->recovery_translation_span_m_;
+    this->initialization_search_bounds_.yaw_span_deg =
+      this->recovery_yaw_span_deg_;
+    this->initialization_attempt_deadline_ =
+      now +
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      std::chrono::duration<double, std::milli>(
+        this->initialization_timeout_ms_));
+    this->initialization_stamp_ns_.store(
+      rclcpp::Time(stamp).nanoseconds(), std::memory_order_release);
+    this->pending_initialization_task_.reset();
+    this->active_initialization_task_.reset();
+    this->state_machine_->beginRelocalization(correction);
+  }
+  this->publishSupersededTasks(invalidated);
+  this->registration_cv_.notify_all();
+  this->publishStateDiagnostic(
+    stamp, ndt_localization::DecisionCode::RELOCALIZATION_STARTED);
+  return true;
+}
+
+void LocalizationNode::triggerRelocalizationCallback(
+  const std_srvs::srv::Trigger::Request::SharedPtr,
+  std_srvs::srv::Trigger::Response::SharedPtr response)
+{
+  if (!this->state_machine_->hasValidCorrection()) {
+    response->success = false;
+    response->message = "no validated correction is available";
+    return;
+  }
+  this->state_machine_->enterLost();
+  const builtin_interfaces::msg::Time stamp = this->now();
+  response->success = this->startRelocalization(stamp, true);
+  response->message = response->success ?
+    "bounded background relocalization started" :
+    "no validated correction is available";
 }
 
 void LocalizationNode::tryStartPendingInitialization()
 {
   builtin_interfaces::msg::Time pending_stamp;
   Eigen::Isometry3d pending_pose = Eigen::Isometry3d::Identity();
+  ndt_localization::InitializationSearchBounds pending_bounds;
   {
     std::lock_guard<std::mutex> pending_lock(this->pending_mutex_);
     if (!this->initial_pose_waiting_for_odometry_) {
@@ -1557,6 +2240,7 @@ void LocalizationNode::tryStartPendingInitialization()
     }
     pending_stamp = this->pending_initial_pose_stamp_;
     pending_pose = this->pending_initial_pose_;
+    pending_bounds = this->pending_initialization_search_bounds_;
   }
   const ndt_localization::DecisionCode timestamp_result =
     this->validateTimestamp(
@@ -1598,7 +2282,8 @@ void LocalizationNode::tryStartPendingInitialization()
     this->beginInitialization(
       pending_stamp,
       pending_pose,
-      synchronized_odometry.pose);
+      synchronized_odometry.pose,
+      pending_bounds);
   } else if (
     synchronized_odometry.code ==
     ndt_localization::DecisionCode::ODOMETRY_TOO_OLD)

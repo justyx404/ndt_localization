@@ -27,6 +27,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
@@ -46,6 +47,7 @@ set(dependencies
   nav_msgs
   sensor_msgs
   std_msgs
+  std_srvs
   tf2
   tf2_ros
   tf2_eigen
@@ -61,10 +63,22 @@ include_directories(
   ${PCL_INCLUDE_DIRS}
 )
 
-# Phase 1/2 state, synchronization, validation, and workload-control core
+# Phase 1/2/3 state, validation, workload-control, and initialization core
 add_library(localization_core src/localization_core.cpp)
 target_link_libraries(localization_core Eigen3::Eigen)
 target_include_directories(localization_core PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+)
+
+add_library(robust_initializer src/robust_initializer.cpp)
+target_link_libraries(
+  robust_initializer
+  localization_core
+  ${PCL_LIBRARIES}
+  Eigen3::Eigen
+)
+target_include_directories(robust_initializer PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
 )
@@ -74,13 +88,14 @@ add_executable(localization_node src/localization.cpp)
 target_link_libraries(
   localization_node
   localization_core
+  robust_initializer
   ${PCL_LIBRARIES}
   Eigen3::Eigen
 )
 ament_target_dependencies(localization_node ${dependencies})
 
 # Install targets
-install(TARGETS localization_node localization_core
+install(TARGETS localization_node localization_core robust_initializer
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}

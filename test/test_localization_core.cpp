@@ -1,5 +1,6 @@
 #include "localization_core.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -155,6 +156,92 @@ TEST(WorkloadBounds, SelectsDeterministicEvenlySpacedIndices)
     (std::vector<std::size_t>{0, 2, 5, 7}));
 }
 
+TEST(InitializationSearch, DerivesBoundedCovarianceAwareEnvelope)
+{
+  const auto bounds = ndt_localization::initializationSearchBounds(
+    2.0, 30.0, 2.5, 1.0, 10.0, 15.0, 180.0);
+  EXPECT_DOUBLE_EQ(bounds.translation_span_m, 5.0);
+  EXPECT_DOUBLE_EQ(bounds.yaw_span_deg, 75.0);
+
+  const auto capped = ndt_localization::initializationSearchBounds(
+    10.0, 180.0, 2.5, 1.0, 10.0, 15.0, 180.0);
+  EXPECT_DOUBLE_EQ(capped.translation_span_m, 10.0);
+  EXPECT_DOUBLE_EQ(capped.yaw_span_deg, 180.0);
+}
+
+TEST(InitializationSearch, UsesPriorYawAndGravityAlignedTilt)
+{
+  Eigen::Isometry3d prior = Eigen::Isometry3d::Identity();
+  prior.translation() = Eigen::Vector3d(3.0, -2.0, 1.0);
+  prior.linear() =
+    (Eigen::AngleAxisd(1.2, Eigen::Vector3d::UnitZ()) *
+    Eigen::AngleAxisd(0.5, Eigen::Vector3d::UnitY()) *
+    Eigen::AngleAxisd(0.4, Eigen::Vector3d::UnitX())).toRotationMatrix();
+
+  Eigen::Isometry3d odometry = Eigen::Isometry3d::Identity();
+  odometry.linear() =
+    (Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitZ()) *
+    Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitY()) *
+    Eigen::AngleAxisd(-0.2, Eigen::Vector3d::UnitX())).toRotationMatrix();
+
+  const Eigen::Isometry3d constrained =
+    ndt_localization::gravityConstrainedPose(prior, odometry);
+  const Eigen::Matrix3d expected_rotation =
+    Eigen::AngleAxisd(
+    0.9, Eigen::Vector3d::UnitZ()).toRotationMatrix() *
+    odometry.rotation();
+  EXPECT_TRUE(constrained.translation().isApprox(prior.translation()));
+  EXPECT_TRUE(constrained.rotation().isApprox(expected_rotation, 1.0e-12));
+  EXPECT_FALSE(constrained.rotation().isApprox(prior.rotation(), 1.0e-3));
+}
+
+TEST(InitializationSearch, GeneratesDeterministicCombinedHypotheses)
+{
+  ndt_localization::InitializationSearchBounds bounds;
+  bounds.translation_span_m = 4.0;
+  bounds.yaw_span_deg = 60.0;
+  const auto hypotheses =
+    ndt_localization::deterministicHypothesisOffsets(bounds, 65);
+  ASSERT_EQ(hypotheses.size(), 65u);
+  EXPECT_DOUBLE_EQ(hypotheses.front().x_m, 0.0);
+  EXPECT_DOUBLE_EQ(hypotheses.front().yaw_deg, 0.0);
+
+  const auto combined = std::find_if(
+    hypotheses.begin(), hypotheses.end(),
+    [](const ndt_localization::HypothesisOffset & hypothesis)
+    {
+      return hypothesis.x_m == 2.0 &&
+             hypothesis.y_m == 0.0 &&
+             hypothesis.yaw_deg == 30.0;
+    });
+  EXPECT_NE(combined, hypotheses.end());
+}
+
+TEST(InitializationSearch, RejectsDistinctAmbiguousRunnerUp)
+{
+  std::vector<ndt_localization::ScoredPose> candidates(3);
+  candidates[0].pose = pose(0.0);
+  candidates[0].score = 0.10;
+  candidates[1].pose = pose(0.1);
+  candidates[1].score = 0.105;
+  candidates[2].pose = pose(2.0);
+  candidates[2].score = 0.30;
+
+  auto selection = ndt_localization::selectBestHypothesis(
+    candidates, 0.5, 0.01, 0.5, 5.0);
+  EXPECT_TRUE(selection.valid);
+  EXPECT_FALSE(selection.ambiguous);
+  EXPECT_EQ(selection.best_index, 0u);
+  EXPECT_EQ(selection.second_index, 2u);
+  EXPECT_NEAR(selection.score_margin, 0.20, 1.0e-12);
+
+  candidates[2].score = 0.105;
+  selection = ndt_localization::selectBestHypothesis(
+    candidates, 0.5, 0.01, 0.5, 5.0);
+  EXPECT_FALSE(selection.valid);
+  EXPECT_TRUE(selection.ambiguous);
+}
+
 TEST(InitialPoseValidation, RejectsMalformedAndAmbiguousInputs)
 {
   ndt_localization::InitialPoseValidationLimits limits;
@@ -287,4 +374,53 @@ TEST(LocalizationStateMachine, NewInitializationSuspendsPublishedCorrection)
     machine.state(), ndt_localization::LocalizationState::INITIALIZING);
   EXPECT_FALSE(machine.hasValidCorrection());
   EXPECT_FALSE(machine.getValidCorrection(nullptr));
+}
+
+TEST(LocalizationStateMachine, RelocalizationRetainsFallbackUntilConfirmed)
+{
+  ndt_localization::LocalizationStateMachine machine(2);
+  machine.beginInitialization(pose(1.0));
+  machine.observeInitializationCorrection(pose(1.0), 0.5, 10.0);
+  ASSERT_TRUE(
+    machine.observeInitializationCorrection(
+      pose(1.0), 0.5, 10.0).confirmed);
+
+  machine.beginRelocalization(pose(2.0));
+  EXPECT_EQ(
+    machine.state(), ndt_localization::LocalizationState::RELOCALIZING);
+  ASSERT_TRUE(machine.hasValidCorrection());
+  EXPECT_NEAR(machine.correction().translation().x(), 1.0, 1.0e-9);
+  ASSERT_TRUE(machine.setInitializationCandidate(pose(2.0)));
+
+  const auto pending = machine.observeInitializationCorrection(
+    pose(2.1), 0.5, 10.0);
+  EXPECT_EQ(
+    pending.code,
+    ndt_localization::DecisionCode::RELOCALIZATION_CONFIRMATION_PENDING);
+  EXPECT_NEAR(machine.correction().translation().x(), 1.0, 1.0e-9);
+
+  const auto confirmed = machine.observeInitializationCorrection(
+    pose(2.2), 0.5, 10.0);
+  EXPECT_TRUE(confirmed.confirmed);
+  EXPECT_EQ(
+    confirmed.code,
+    ndt_localization::DecisionCode::RELOCALIZATION_CONFIRMED);
+  EXPECT_EQ(machine.state(), ndt_localization::LocalizationState::TRACKING);
+  EXPECT_NEAR(machine.correction().translation().x(), 2.2, 1.0e-9);
+}
+
+TEST(LocalizationStateMachine, FailedRelocalizationKeepsLastCorrection)
+{
+  ndt_localization::LocalizationStateMachine machine(1);
+  machine.beginInitialization(pose(1.0));
+  ASSERT_TRUE(
+    machine.observeInitializationCorrection(
+      pose(1.0), 0.5, 10.0).confirmed);
+  machine.beginRelocalization(pose(3.0));
+
+  EXPECT_EQ(
+    machine.failInitializationAttempt(),
+    ndt_localization::LocalizationState::LOST);
+  EXPECT_TRUE(machine.hasValidCorrection());
+  EXPECT_NEAR(machine.correction().translation().x(), 1.0, 1.0e-9);
 }

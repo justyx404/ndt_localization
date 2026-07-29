@@ -267,6 +267,7 @@ class LocalizationBenchmarkEvaluator(Node):
         self.scan_metrics = []
         self.state_events = []
         self.late_results = []
+        self.initialization_searches = []
         self.finalized = False
 
         qos = QoSProfile(depth=2000)
@@ -423,6 +424,52 @@ class LocalizationBenchmarkEvaluator(Node):
                     }
                 )
                 continue
+            if status.name == "ndt_localization/initialization_search":
+                row = {
+                    "timestamp": timestamp,
+                    "decision": values.get("decision", status.message),
+                    "success": (
+                        values.get("success", "false").lower() == "true"
+                    ),
+                    "ambiguous": (
+                        values.get("ambiguous", "false").lower() == "true"
+                    ),
+                    "recovery": (
+                        values.get("recovery", "false").lower() == "true"
+                    ),
+                    "state": values.get("state", "UNKNOWN"),
+                }
+                for key in (
+                    "best_score",
+                    "second_score",
+                    "score_margin",
+                    "coarse_ms",
+                    "refinement_ms",
+                    "total_ms",
+                    "translation_span_m",
+                    "yaw_span_deg",
+                    "initialization_deadline_ms",
+                ):
+                    try:
+                        value = float(values.get(key, "nan"))
+                        row[key] = value if math.isfinite(value) else None
+                    except ValueError:
+                        row[key] = None
+                for key in (
+                    "generation",
+                    "hypotheses",
+                    "evaluated",
+                    "converged",
+                    "refined",
+                    "scan_points",
+                    "target_points",
+                ):
+                    try:
+                        row[key] = int(values.get(key, "0"))
+                    except ValueError:
+                        row[key] = 0
+                self.initialization_searches.append(row)
+                continue
             if status.name != "ndt_localization/scan":
                 continue
             row = {
@@ -491,6 +538,7 @@ class LocalizationBenchmarkEvaluator(Node):
         self.scan_metrics.sort(key=lambda item: item["timestamp"])
         self.state_events.sort(key=lambda item: item["timestamp"])
         self.late_results.sort(key=lambda item: item["timestamp"])
+        self.initialization_searches.sort(key=lambda item: item["timestamp"])
 
         reference_rows = self._reference_rows()
         initial_pose_rows = self._initial_pose_rows()
@@ -580,6 +628,34 @@ class LocalizationBenchmarkEvaluator(Node):
                 "generation",
                 "matcher_ms",
                 "completion_ms",
+            ),
+        )
+        self._write_csv(
+            "initialization_searches.csv",
+            self.initialization_searches,
+            (
+                "timestamp",
+                "decision",
+                "success",
+                "ambiguous",
+                "recovery",
+                "state",
+                "generation",
+                "hypotheses",
+                "evaluated",
+                "converged",
+                "refined",
+                "scan_points",
+                "target_points",
+                "best_score",
+                "second_score",
+                "score_margin",
+                "coarse_ms",
+                "refinement_ms",
+                "total_ms",
+                "translation_span_m",
+                "yaw_span_deg",
+                "initialization_deadline_ms",
             ),
         )
 
@@ -758,7 +834,7 @@ class LocalizationBenchmarkEvaluator(Node):
             with open(self.config_file, "rb") as config_input:
                 config_sha256 = hashlib.sha256(config_input.read()).hexdigest()
         return {
-            "schema_version": 3,
+            "schema_version": 4,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "run": {
                 "name": self.run_name,
@@ -792,9 +868,30 @@ class LocalizationBenchmarkEvaluator(Node):
                 "scan_diagnostics": len(self.scan_metrics),
                 "state_events": len(self.state_events),
                 "late_results": len(self.late_results),
+                "initialization_searches": len(
+                    self.initialization_searches
+                ),
             },
             "state_events": self.state_events,
             "late_results": self.late_results,
+            "initialization_searches": self.initialization_searches,
+            "initialization_search": {
+                key: distribution(
+                    [
+                        row[key]
+                        for row in self.initialization_searches
+                        if row[key] is not None
+                    ]
+                )
+                for key in (
+                    "best_score",
+                    "second_score",
+                    "score_margin",
+                    "coarse_ms",
+                    "refinement_ms",
+                    "total_ms",
+                )
+            },
             "localization_evaluation_start_timestamp": (
                 self.synthetic_initial_poses[0][0]
                 if self.synthetic_initial_poses
@@ -907,6 +1004,17 @@ class LocalizationBenchmarkEvaluator(Node):
         queue_wait = summary["latency_ms"]["queue_wait_ms"]
         decisions = summary["scan_decisions"]
         workload = summary["workload_bounds"]
+        initialization = summary["initialization_search"]
+        initialization_rows = summary["initialization_searches"]
+        successful_initializations = sum(
+            1 for row in initialization_rows if row["success"]
+        )
+        ambiguous_initializations = sum(
+            1 for row in initialization_rows if row["ambiguous"]
+        )
+        recovery_initializations = sum(
+            1 for row in initialization_rows if row["recovery"]
+        )
 
         def metric(data, key):
             value = data.get(key)
@@ -943,6 +1051,11 @@ class LocalizationBenchmarkEvaluator(Node):
                 metric(queue_wait, key)
                 for key in ("p50", "p95", "p99", "maximum")
             ),
+            "| Initialization search (ms) | %s | %s | %s | %s |"
+            % tuple(
+                metric(initialization["total_ms"], key)
+                for key in ("p50", "p95", "p99", "maximum")
+            ),
             "",
             "- Scan decisions: %d" % summary["samples"]["scan_diagnostics"],
             "- Accepted: %d" % decisions["accepted"],
@@ -953,6 +1066,14 @@ class LocalizationBenchmarkEvaluator(Node):
             % (summary["run"]["deadline_ms"], decisions["deadline_misses"]),
             "- Late matcher completions discarded: %d"
             % summary["samples"]["late_results"],
+            "- Initialization searches: %d (%d successful, %d ambiguous, "
+            "%d recovery)"
+            % (
+                len(initialization_rows),
+                successful_initializations,
+                ambiguous_initializations,
+                recovery_initializations,
+            ),
             "- Maximum capped scan points: %s"
             % metric(workload["scan_points_capped"], "maximum"),
             "- Maximum local-map target points: %s"

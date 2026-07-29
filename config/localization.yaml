@@ -48,3 +48,35 @@
       max_confirmation_translation_delta_m: 0.5
       max_confirmation_rotation_delta_deg: 10.0
       max_consecutive_rejections: 10
+
+      # Phase 3 covariance-aware coarse-to-fine initialization.
+      # The initializer has its own worker and global 2 s watchdog, so scan
+      # decisions retain the Phase 2 80 ms budget.
+      initialization_timeout_ms: 2000.0
+      initialization_confirmation_reserve_ms: 350.0
+      initialization_stddev_multiplier: 2.5
+      initialization_min_translation_span_m: 1.0
+      initialization_max_translation_span_m: 10.0
+      initialization_min_yaw_span_deg: 15.0
+      initialization_max_yaw_span_deg: 180.0
+      initialization_max_hypotheses: 65
+      initialization_coarse_map_leaf_size_m: 0.5
+      initialization_coarse_scan_leaf_size_m: 0.4
+      initialization_max_coarse_scan_points: 2000
+      initialization_coarse_resolution_m: 2.0
+      initialization_coarse_step_size_m: 0.2
+      initialization_coarse_trans_epsilon: 0.05
+      initialization_coarse_max_iter: 8
+      initialization_refinement_candidates: 3
+      initialization_refinement_reserve_ms: 250.0
+      initialization_fitness_max_range_m: 2.0
+      initialization_max_fitness_score: 0.5
+      initialization_min_score_margin: 0.01
+      initialization_distinct_translation_m: 0.5
+      initialization_distinct_rotation_deg: 5.0
+
+      # LOST-state recovery retains the last validated map correction while
+      # searching and only swaps corrections after three confirmations.
+      recovery_translation_span_m: 5.0
+      recovery_yaw_span_deg: 90.0
+      relocalization_retry_delay_ms: 500.0

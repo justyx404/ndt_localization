@@ -1,9 +1,10 @@
 # Localization benchmark harness
 
 This harness implements the measurement foundation from Phase 0, the
-state/validation observability required by Phase 1, and the bounded-workload
-measurements required by Phase 2 of `ROBUST_LOCALIZATION_PLAN.md`. It keeps
-recorded localization outputs isolated from the node under test:
+state/validation observability required by Phase 1, the bounded-workload
+measurements required by Phase 2, and the initialization/recovery measurements
+required by Phase 3 of `ROBUST_LOCALIZATION_PLAN.md`. It keeps recorded
+localization outputs isolated from the node under test:
 
 - recorded `/tf` becomes `/reference/tf`;
 - recorded `/odometry_map` becomes `/reference/odometry_map`;
@@ -78,6 +79,7 @@ Each live run writes:
 - `scan_metrics.csv`;
 - `state_events.csv`;
 - `late_results.csv`;
+- `initialization_searches.csv`;
 - `summary.json`;
 - `report.md`.
 
@@ -88,9 +90,16 @@ queue wait, decision deadline, deadline status, deterministic scan cap, local
 map size, and stage timings. `late_results.csv` records matcher work that
 finished after its scan had already been superseded or timed out; such results
 are diagnostic-only and cannot update the correction. `state_events.csv`
-records initialization, validation rejection, and loss transitions. The
-summary keeps reference and localizer TF counts separate as
+records initialization, validation rejection, and loss transitions.
+`initialization_searches.csv` records the covariance-derived search envelope,
+hypothesis/convergence/refinement counts, stage runtime, best and second-best
+scores, ambiguity margin, final decision, and whether the search was a
+recovery attempt. The summary keeps reference and localizer TF counts separate as
 `map_to_odom_transforms` and `localization_map_to_odom_transforms`.
+
+The localizer exposes `/localization/trigger_relocalization`
+(`std_srvs/srv/Trigger`) for controlled recovery tests. Automatic recovery
+uses the same bounded path after tracking enters `LOST`.
 
 ## Four-bag development baseline
 
