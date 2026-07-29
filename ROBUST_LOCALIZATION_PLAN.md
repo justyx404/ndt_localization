@@ -1,11 +1,12 @@
 # Robust and Bounded-Latency Localization Plan
 
-Status: Phases 0, 1, 2, and 3 complete; Phase 4 not started
+Status: Phases 0, 1, 2, 3, and replacement Phase 4 complete; Phase 5 not started
 Date: 2026-07-29
 Phase 0 completed: 2026-07-29
 Phase 1 completed: 2026-07-29
 Phase 2 completed: 2026-07-29
 Phase 3 completed: 2026-07-29
+Replacement Phase 4 completed: 2026-07-29
 Package: `ndt_localization`
 
 ## 1. Objective
@@ -386,25 +387,31 @@ Exit criterion:
 - false acceptance remains zero on the test suite;
 - initialization failure is explicit and bounded.
 
-### Phase 4: Local matcher comparison
+### Phase 4: Production configuration minimization
 
-Define a common local matcher interface and compare:
+The planned local-matcher comparison is deliberately skipped. Hardened PCL
+NDT already meets the development-set accuracy and latency requirements, and
+adding another matcher dependency is not justified before held-out
+validation.
 
-- hardened PCL NDT;
-- optimized/parallel NDT if dependency cost is acceptable;
-- `small_gicp` GICP/VGICP.
+Implement:
 
-Selection criteria:
+- classify localization parameters as validated defaults or deployment
+  overrides;
+- remove default-valued localization overrides from the combined
+  `spot_navigation` configuration;
+- retain the explicit package-local localization profile for benchmarking,
+  tuning, and auditability;
+- verify that the minimal deployment configuration resolves to the same
+  effective values as the Phase 3 profile;
+- replay the minimal configuration and compare accuracy, initialization, and
+  deadline behavior against Phase 3.
 
-- mine replay accuracy;
-- convergence reliability;
-- inlier and Hessian/localizability information;
-- deadline misses;
-- CPU utilization;
-- maximum observed latency;
-- dependency and maintenance cost.
+Exit criterion:
 
-The algorithm with the lowest average runtime will not automatically be selected.
+- the active deployment file contains no redundant localization overrides;
+- effective localization parameters remain identical to the Phase 3 profile;
+- measured performance does not regress.
 
 ### Phase 5: Held-out validation
 
