@@ -8,9 +8,8 @@
 #include <limits>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
-#include "diagnostic_msgs/msg/diagnostic_status.hpp"
-#include "diagnostic_msgs/msg/key_value.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 
 #include <pcl_conversions/pcl_conversions.h>
@@ -51,24 +50,6 @@ constexpr double kInitializationMinimumTranslationSpanM = 1.0;
 constexpr double kInitializationMinimumYawSpanDeg = 15.0;
 constexpr double kRelocalizationRetryDelayMs = 500.0;
 
-diagnostic_msgs::msg::KeyValue keyValue(
-  const std::string & key,
-  const std::string & value)
-{
-  diagnostic_msgs::msg::KeyValue item;
-  item.key = key;
-  item.value = value;
-  return item;
-}
-
-template<typename T>
-diagnostic_msgs::msg::KeyValue numericKeyValue(
-  const std::string & key,
-  T value)
-{
-  return keyValue(key, std::to_string(value));
-}
-
 std::string normalizedFrame(const std::string & frame)
 {
   const std::size_t first_character = frame.find_first_not_of('/');
@@ -106,20 +87,6 @@ Eigen::Isometry3d poseToIsometry(const geometry_msgs::msg::Pose & pose)
     pose.orientation.y, pose.orientation.z);
   transform.linear() = orientation.normalized().toRotationMatrix();
   return transform;
-}
-
-double elapsedMilliseconds(
-  const std::chrono::steady_clock::time_point & start)
-{
-  return std::chrono::duration<double, std::milli>(
-    std::chrono::steady_clock::now() - start).count();
-}
-
-double durationMilliseconds(
-  const std::chrono::steady_clock::time_point & start,
-  const std::chrono::steady_clock::time_point & end)
-{
-  return std::chrono::duration<double, std::milli>(end - start).count();
 }
 
 std::int64_t steadyNanoseconds(
@@ -330,9 +297,6 @@ LocalizationNode::LocalizationNode()
 
   this->pub_odom_ =
     this->create_publisher<nav_msgs::msg::Odometry>("/odometry_map", 10);
-  this->diagnostic_pub_ =
-    this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
-    "/localization/scan_diagnostics", 10);
   this->relocalization_service_ =
     this->create_service<std_srvs::srv::Trigger>(
     "/localization/trigger_relocalization",
@@ -375,15 +339,10 @@ void LocalizationNode::mapCallback(
     RCLCPP_ERROR(
       this->get_logger(), "Rejected map with frame '%s'; expected '%s'",
       msg->header.frame_id.c_str(), this->global_frame_id_.c_str());
-    this->publishStateDiagnostic(
-      msg->header.stamp,
-      ndt_localization::DecisionCode::MAP_FRAME_INVALID);
     return;
   }
   if (msg->width == 0 || msg->height == 0) {
     RCLCPP_ERROR(this->get_logger(), "Rejected empty global map");
-    this->publishStateDiagnostic(
-      msg->header.stamp, ndt_localization::DecisionCode::MAP_EMPTY);
     return;
   }
 
@@ -398,8 +357,6 @@ void LocalizationNode::mapCallback(
     map, this->ndt_map_leaf_size_);
   if (this->global_map_->empty()) {
     RCLCPP_ERROR(this->get_logger(), "Rejected map with no usable points");
-    this->publishStateDiagnostic(
-      msg->header.stamp, ndt_localization::DecisionCode::MAP_EMPTY);
     return;
   }
 
@@ -416,27 +373,17 @@ void LocalizationNode::mapCallback(
     this->global_map_->size(), this->raw_map_points_);
 }
 
-ndt_localization::DecisionCode LocalizationNode::validateTimestamp(
+bool LocalizationNode::validTimestamp(
   const builtin_interfaces::msg::Time & stamp,
-  double maximum_age_seconds,
-  ndt_localization::DecisionCode invalid_code,
-  ndt_localization::DecisionCode stale_code,
-  ndt_localization::DecisionCode future_code,
-  double * age_ms) const
+  double maximum_age_seconds) const
 {
   if (stamp.sec <= 0 || stamp.nanosec >= 1000000000u) {
-    return invalid_code;
+    return false;
   }
   const rclcpp::Time message_time(stamp);
-  const std::int64_t now_ns = this->now().nanoseconds();
-  if (age_ms != nullptr) {
-    *age_ms =
-      static_cast<double>(now_ns - message_time.nanoseconds()) / 1.0e6;
-  }
-  return ndt_localization::validateTimestampNanoseconds(
-    message_time.nanoseconds(), now_ns, maximum_age_seconds,
-    kFutureToleranceSeconds, invalid_code, stale_code,
-    future_code).code;
+  return ndt_localization::validTimestampNanoseconds(
+    message_time.nanoseconds(), this->now().nanoseconds(),
+    maximum_age_seconds, kFutureToleranceSeconds);
 }
 
 void LocalizationNode::odomCallback(
@@ -445,26 +392,14 @@ void LocalizationNode::odomCallback(
   if (normalizedFrame(msg->header.frame_id) != this->odom_frame_id_ ||
     normalizedFrame(msg->child_frame_id) != this->base_frame_id_)
   {
-    this->publishStateDiagnostic(
-      msg->header.stamp,
-      ndt_localization::DecisionCode::ODOMETRY_FRAME_INVALID);
     return;
   }
-  const ndt_localization::DecisionCode timestamp_result =
-    this->validateTimestamp(
-    msg->header.stamp, kMaximumOdometryAgeSeconds,
-    ndt_localization::DecisionCode::ODOMETRY_STAMP_INVALID,
-    ndt_localization::DecisionCode::ODOMETRY_STALE,
-    ndt_localization::DecisionCode::ODOMETRY_FUTURE,
-    nullptr);
-  if (timestamp_result != ndt_localization::DecisionCode::NONE) {
-    this->publishStateDiagnostic(msg->header.stamp, timestamp_result);
+  if (!this->validTimestamp(
+      msg->header.stamp, kMaximumOdometryAgeSeconds))
+  {
     return;
   }
   if (!validPose(msg->pose.pose, kQuaternionNormTolerance)) {
-    this->publishStateDiagnostic(
-      msg->header.stamp,
-      ndt_localization::DecisionCode::ODOMETRY_POSE_INVALID);
     return;
   }
 
@@ -538,48 +473,33 @@ void LocalizationNode::scanCallback(
   const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
 {
   const auto received_at = std::chrono::steady_clock::now();
-  ScanMetrics metrics;
-  metrics.raw_scan_points =
-    static_cast<std::size_t>(msg->width) * msg->height;
 
   if (normalizedFrame(msg->header.frame_id) != this->base_frame_id_) {
-    this->publishImmediateScanRejection(
-      msg, metrics, ndt_localization::DecisionCode::SCAN_FRAME_INVALID);
+    this->rejectScan();
     return;
   }
-  const ndt_localization::DecisionCode timestamp_result =
-    this->validateTimestamp(
-    msg->header.stamp, kMaximumScanAgeSeconds,
-    ndt_localization::DecisionCode::SCAN_STAMP_INVALID,
-    ndt_localization::DecisionCode::SCAN_STALE,
-    ndt_localization::DecisionCode::SCAN_FUTURE,
-    &metrics.input_age_ms);
-  if (timestamp_result != ndt_localization::DecisionCode::NONE) {
-    this->publishImmediateScanRejection(msg, metrics, timestamp_result);
+  if (!this->validTimestamp(msg->header.stamp, kMaximumScanAgeSeconds)) {
+    this->rejectScan();
     return;
   }
   if (!this->map_initialized_.load(std::memory_order_acquire)) {
-    this->publishImmediateScanRejection(
-      msg, metrics, ndt_localization::DecisionCode::MAP_UNAVAILABLE);
+    this->rejectScan();
     return;
   }
-  if (metrics.raw_scan_points == 0) {
-    this->publishImmediateScanRejection(
-      msg, metrics, ndt_localization::DecisionCode::SCAN_EMPTY);
+  if (msg->width == 0 || msg->height == 0) {
+    this->rejectScan();
     return;
   }
 
   ndt_localization::LocalizationState state =
     this->state_machine_->state();
   if (state == ndt_localization::LocalizationState::UNINITIALIZED) {
-    this->publishImmediateScanRejection(
-      msg, metrics, ndt_localization::DecisionCode::STATE_UNINITIALIZED);
+    this->rejectScan();
     return;
   }
   if (state == ndt_localization::LocalizationState::LOST) {
     if (!this->startRelocalization(msg->header.stamp)) {
-      this->publishImmediateScanRejection(
-        msg, metrics, ndt_localization::DecisionCode::STATE_LOST);
+      this->rejectScan();
       return;
     }
     state = this->state_machine_->state();
@@ -587,13 +507,11 @@ void LocalizationNode::scanCallback(
   if (state == ndt_localization::LocalizationState::INITIALIZING ||
     state == ndt_localization::LocalizationState::RELOCALIZING)
   {
-    const ndt_localization::ValidationResult sequence_validation =
-      ndt_localization::validateInitializationScanTimestamp(
+    if (!ndt_localization::initializationScanFollowsPrior(
       rclcpp::Time(msg->header.stamp).nanoseconds(),
-      this->initialization_stamp_ns_.load(std::memory_order_acquire));
-    if (!sequence_validation.valid) {
-      this->publishImmediateScanRejection(
-        msg, metrics, sequence_validation.code);
+      this->initialization_stamp_ns_.load(std::memory_order_acquire)))
+    {
+      this->rejectScan();
       return;
     }
     bool search_required = false;
@@ -604,7 +522,7 @@ void LocalizationNode::scanCallback(
         this->initialization_search_required_;
     }
     if (search_required) {
-      this->enqueueInitializationScan(msg, received_at);
+      this->enqueueInitializationScan(msg);
     } else {
       this->enqueueScan(msg, received_at);
     }
@@ -613,22 +531,14 @@ void LocalizationNode::scanCallback(
   this->enqueueScan(msg, received_at);
 }
 
-void LocalizationNode::publishImmediateScanRejection(
-  const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
-  ScanMetrics metrics,
-  ndt_localization::DecisionCode code)
+void LocalizationNode::rejectScan()
 {
-  std::vector<std::shared_ptr<ScanTask>> invalidated;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
-    invalidated = this->invalidateRegistrationWorkLocked();
+    this->invalidateRegistrationWorkLocked();
     this->applyRejectionStateLocked(false);
   }
-  this->publishSupersededTasks(invalidated);
   this->registration_cv_.notify_all();
-  metrics.decision = code;
-  metrics.total_ms = 0.0;
-  this->publishScanDiagnostic(msg->header.stamp, metrics);
 }
 
 bool LocalizationNode::applyRejectionStateLocked(
@@ -664,38 +574,31 @@ void LocalizationNode::enqueueScan(
     std::chrono::duration<double, std::milli>(
       this->registration_deadline_ms_ -
       kDeadlineWatchdogMarginMs));
-  std::vector<std::shared_ptr<ScanTask>> superseded;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
     task->generation = ++this->latest_scan_generation_;
     const auto supersede =
-      [this, &superseded](const std::shared_ptr<ScanTask> & old_task)
+      [this](const std::shared_ptr<ScanTask> & old_task)
       {
         if (!old_task || old_task->decided) {
           return;
         }
         old_task->decided = true;
-        old_task->decision =
-          ndt_localization::DecisionCode::SCAN_SUPERSEDED;
-        superseded.push_back(old_task);
         this->applyRejectionStateLocked(false);
       };
     supersede(this->pending_scan_task_);
     supersede(this->active_scan_task_);
     this->pending_scan_task_ = task;
   }
-  this->publishSupersededTasks(superseded);
   this->registration_cv_.notify_all();
 }
 
 void LocalizationNode::enqueueInitializationScan(
-  const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
-  const std::chrono::steady_clock::time_point & received_at)
+  const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg)
 {
   std::shared_ptr<InitializationTask> task =
     std::make_shared<InitializationTask>();
   task->message = msg;
-  task->received_at = received_at;
   bool queued = false;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
@@ -715,64 +618,26 @@ void LocalizationNode::enqueueInitializationScan(
     }
   }
 
-  ScanMetrics metrics;
-  metrics.raw_scan_points =
-    static_cast<std::size_t>(msg->width) * msg->height;
-  metrics.generation = task->generation;
-  metrics.input_age_ms =
-    (this->now() - rclcpp::Time(msg->header.stamp)).seconds() * 1000.0;
-  metrics.total_ms = elapsedMilliseconds(received_at);
-  metrics.decision = queued ?
-    ndt_localization::DecisionCode::INITIALIZATION_SEARCH_PENDING :
-    ndt_localization::DecisionCode::RESULT_GENERATION_STALE;
-  this->publishScanDiagnostic(msg->header.stamp, metrics);
   if (queued) {
     this->registration_cv_.notify_all();
   }
 }
 
-void LocalizationNode::publishSupersededTasks(
-  const std::vector<std::shared_ptr<ScanTask>> & tasks)
-{
-  for (const auto & task : tasks) {
-    ScanMetrics metrics;
-    metrics.decision = task->decision;
-    metrics.generation = task->generation;
-    metrics.raw_scan_points =
-      static_cast<std::size_t>(task->message->width) *
-      task->message->height;
-    metrics.total_ms = elapsedMilliseconds(task->received_at);
-    metrics.queue_wait_ms =
-      task->started_at == std::chrono::steady_clock::time_point() ?
-      metrics.total_ms :
-      durationMilliseconds(task->received_at, task->started_at);
-    metrics.input_age_ms =
-      (this->now() -
-      rclcpp::Time(task->message->header.stamp)).seconds() * 1000.0;
-    this->publishScanDiagnostic(task->message->header.stamp, metrics);
-  }
-}
-
-std::vector<std::shared_ptr<LocalizationNode::ScanTask>>
+void
 LocalizationNode::invalidateRegistrationWorkLocked()
 {
   ++this->latest_scan_generation_;
-  std::vector<std::shared_ptr<ScanTask>> invalidated;
   const auto invalidate =
-    [&invalidated](const std::shared_ptr<ScanTask> & task)
+    [](const std::shared_ptr<ScanTask> & task)
     {
       if (!task || task->decided) {
         return;
       }
       task->decided = true;
-      task->decision =
-        ndt_localization::DecisionCode::RESULT_GENERATION_STALE;
-      invalidated.push_back(task);
     };
   invalidate(this->pending_scan_task_);
   invalidate(this->active_scan_task_);
   this->pending_scan_task_.reset();
-  return invalidated;
 }
 
 void LocalizationNode::registrationWorkerLoop()
@@ -796,11 +661,6 @@ void LocalizationNode::registrationWorkerLoop()
       }
       task = this->pending_scan_task_;
       this->pending_scan_task_.reset();
-      if (task->started_at ==
-        std::chrono::steady_clock::time_point())
-      {
-        task->started_at = std::chrono::steady_clock::now();
-      }
       this->active_scan_task_ = task;
     }
     this->processScanTask(task);
@@ -834,12 +694,6 @@ void LocalizationNode::initializationWorkerLoop()
 void LocalizationNode::processInitializationTask(
   const std::shared_ptr<InitializationTask> & task)
 {
-  InitializationMetrics metrics;
-  metrics.generation = task->generation;
-  metrics.recovery = task->recovery;
-  metrics.translation_span_m = task->bounds.translation_span_m;
-  metrics.yaw_span_deg = task->bounds.yaw_span_deg;
-
   ndt_localization::OdometryLookup synchronized_odometry;
   {
     std::lock_guard<std::mutex> lock(this->odometry_mutex_);
@@ -847,17 +701,15 @@ void LocalizationNode::processInitializationTask(
       rclcpp::Time(task->message->header.stamp).nanoseconds(),
       kMaximumOdometryInterpolationGapSeconds);
   }
-  if (!synchronized_odometry.success) {
+  if (synchronized_odometry.status !=
+    ndt_localization::OdometryStatus::AVAILABLE)
+  {
     {
       std::lock_guard<std::mutex> lock(this->registration_mutex_);
       if (this->active_initialization_task_ == task) {
         this->active_initialization_task_.reset();
       }
     }
-    metrics.decision = synchronized_odometry.code;
-    metrics.total_ms = elapsedMilliseconds(task->received_at);
-    this->publishInitializationDiagnostic(
-      task->message->header.stamp, metrics);
     this->registration_cv_.notify_all();
     return;
   }
@@ -881,11 +733,6 @@ void LocalizationNode::processInitializationTask(
         this->active_initialization_task_.reset();
       }
     }
-    metrics.decision =
-      ndt_localization::DecisionCode::RESULT_GENERATION_STALE;
-    metrics.total_ms = elapsedMilliseconds(task->received_at);
-    this->publishInitializationDiagnostic(
-      task->message->header.stamp, metrics);
     return;
   }
 
@@ -897,33 +744,18 @@ void LocalizationNode::processInitializationTask(
   request.prior_pose = prior_correction * synchronized_odometry.pose;
   request.bounds = task->bounds;
   request.deadline = task->search_deadline;
-  const ndt_localization::RobustInitializer::Result result =
-    this->robust_initializer_->search(request);
-  metrics.ambiguous = result.ambiguous;
-  metrics.hypotheses = result.hypotheses;
-  metrics.evaluated = result.evaluated;
-  metrics.converged = result.converged;
-  metrics.refined = result.refined;
-  metrics.scan_points = result.scan_points;
-  metrics.target_points = result.target_points;
-  metrics.best_score = result.best_score;
-  metrics.second_score = result.second_score;
-  metrics.score_margin = result.score_margin;
-  metrics.coarse_ms = result.coarse_ms;
-  metrics.refinement_ms = result.refinement_ms;
-  metrics.total_ms = elapsedMilliseconds(task->received_at);
-
+  Eigen::Isometry3d selected_pose = Eigen::Isometry3d::Identity();
+  const bool search_succeeded =
+    this->robust_initializer_->search(request, &selected_pose);
   const Eigen::Isometry3d candidate_correction =
-    result.pose * synchronized_odometry.pose.inverse();
-  const ndt_localization::TransformValidation candidate_validation =
-    ndt_localization::validateTransformCandidate(
-    request.prior_pose, result.pose,
+    selected_pose * synchronized_odometry.pose.inverse();
+  const bool candidate_valid =
+    search_succeeded && ndt_localization::validTransformCandidate(
+    request.prior_pose, selected_pose,
     task->bounds.translation_span_m +
     this->maximum_result_translation_delta_m_,
     task->bounds.yaw_span_deg +
     this->maximum_result_rotation_delta_deg_);
-  bool selected = false;
-  bool failed = false;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
     if (!this->initialization_attempt_active_ ||
@@ -931,23 +763,17 @@ void LocalizationNode::processInitializationTask(
       std::chrono::steady_clock::now() >=
       this->initialization_attempt_deadline_)
     {
-      metrics.decision =
-        ndt_localization::DecisionCode::RESULT_GENERATION_STALE;
-    } else if (result.success && candidate_validation.valid &&
+      // Superseded search result.
+    } else if (candidate_valid &&
       this->state_machine_->setInitializationCandidate(
         candidate_correction))
     {
-      selected = true;
       this->initialization_search_required_ = false;
       this->pending_initialization_task_.reset();
       this->initialization_stamp_ns_.store(
         rclcpp::Time(task->message->header.stamp).nanoseconds(),
         std::memory_order_release);
-      metrics.decision = task->recovery ?
-        ndt_localization::DecisionCode::RELOCALIZATION_HYPOTHESIS_SELECTED :
-        ndt_localization::DecisionCode::INITIALIZATION_HYPOTHESIS_SELECTED;
     } else {
-      failed = true;
       this->initialization_attempt_active_ = false;
       this->initialization_search_required_ = false;
       this->pending_initialization_task_.reset();
@@ -958,24 +784,8 @@ void LocalizationNode::processInitializationTask(
           std::chrono::steady_clock::now() +
           std::chrono::duration_cast<
           std::chrono::steady_clock::duration>(
-          std::chrono::duration<double, std::milli>(
-            kRelocalizationRetryDelayMs));
-      }
-      if (!candidate_validation.valid && result.success) {
-        metrics.decision = candidate_validation.code;
-      } else if (task->recovery) {
-        if (result.ambiguous) {
-          metrics.decision =
-            ndt_localization::DecisionCode::RELOCALIZATION_AMBIGUOUS;
-        } else if (result.timed_out) {
-          metrics.decision =
-            ndt_localization::DecisionCode::RELOCALIZATION_SEARCH_TIMEOUT;
-        } else {
-          metrics.decision =
-            ndt_localization::DecisionCode::RELOCALIZATION_SEARCH_FAILED;
-        }
-      } else {
-        metrics.decision = result.code;
+            std::chrono::duration<double, std::milli>(
+              kRelocalizationRetryDelayMs));
       }
     }
     if (this->active_initialization_task_ == task) {
@@ -983,19 +793,10 @@ void LocalizationNode::processInitializationTask(
     }
   }
   this->registration_cv_.notify_all();
-  metrics.success = selected;
-  this->publishInitializationDiagnostic(
-    task->message->header.stamp, metrics);
-  if (selected || failed) {
-    this->publishStateDiagnostic(
-      task->message->header.stamp, metrics.decision);
-  }
 }
 
-bool LocalizationNode::finalizeRejectedTask(
+void LocalizationNode::finalizeRejectedTask(
   const std::shared_ptr<ScanTask> & task,
-  ScanMetrics metrics,
-  ndt_localization::DecisionCode code,
   bool registration_rejection)
 {
   bool entered_lost = false;
@@ -1005,22 +806,18 @@ bool LocalizationNode::finalizeRejectedTask(
       if (this->active_scan_task_ == task) {
         this->active_scan_task_.reset();
       }
-      return false;
+      return;
     }
     const auto now = std::chrono::steady_clock::now();
     if (ndt_localization::deadlineExpired(
         steadyNanoseconds(task->received_at), steadyNanoseconds(now),
         this->registration_deadline_ms_))
     {
-      code = ndt_localization::DecisionCode::REGISTRATION_TIMEOUT;
       registration_rejection = true;
-      metrics.deadline_exceeded = true;
     } else if (task->generation != this->latest_scan_generation_) {
-      code = ndt_localization::DecisionCode::RESULT_GENERATION_STALE;
       registration_rejection = false;
     }
     task->decided = true;
-    task->decision = code;
     if (this->active_scan_task_ == task) {
       this->active_scan_task_.reset();
     }
@@ -1031,77 +828,54 @@ bool LocalizationNode::finalizeRejectedTask(
       this->applyRejectionStateLocked(registration_rejection);
   }
   this->registration_cv_.notify_all();
-  metrics.decision = code;
-  metrics.generation = task->generation;
-  metrics.total_ms = elapsedMilliseconds(task->received_at);
-  metrics.input_age_ms =
-    (this->now() -
-    rclcpp::Time(task->message->header.stamp)).seconds() * 1000.0;
-  this->publishScanDiagnostic(task->message->header.stamp, metrics);
   if (entered_lost) {
-    this->publishStateDiagnostic(
-      task->message->header.stamp,
-      ndt_localization::DecisionCode::TRACKING_LOST);
     this->startRelocalization(task->message->header.stamp);
   }
-  return true;
 }
 
-ndt_localization::DecisionCode LocalizationNode::prepareRegistrationInput(
+LocalizationNode::RegistrationInputStatus
+LocalizationNode::prepareRegistrationInput(
   const std::shared_ptr<ScanTask> & task,
   const Eigen::Isometry3d & correction_guess,
   const ndt_localization::OdometryLookup & synchronized_odometry,
-  ScanMetrics * metrics,
   RegistrationInput * input)
 {
-  const auto conversion_start = std::chrono::steady_clock::now();
   pcl::PointCloud<PointType>::Ptr converted_scan(
     new pcl::PointCloud<PointType>());
   pcl::fromROSMsg(*task->message, *converted_scan);
   input->scan = ndt_localization::voxelDownsample(
     converted_scan, kNdtScanLeafSizeM);
-  metrics->filtered_scan_points = input->scan->size();
   input->scan = ndt_localization::deterministicallyCap(
     input->scan, static_cast<std::size_t>(this->maximum_scan_points_));
-  metrics->capped_scan_points = input->scan->size();
-  metrics->conversion_ms = elapsedMilliseconds(conversion_start);
   if (input->scan->empty()) {
-    return ndt_localization::DecisionCode::SCAN_EMPTY;
+    return RegistrationInputStatus::INVALID_SCAN;
   }
 
   input->pose_guess =
     correction_guess * synchronized_odometry.pose;
-  const auto local_map_start = std::chrono::steady_clock::now();
   input->target = ndt_localization::radiusSubmap(
     this->global_map_, this->map_kdtree_,
     input->pose_guess.translation(), this->local_map_radius_m_,
     static_cast<std::size_t>(this->maximum_local_map_points_));
-  metrics->target_points = input->target->size();
-  metrics->local_map_ms = elapsedMilliseconds(local_map_start);
   if (input->target->size() < kMinimumLocalMapPoints) {
-    return ndt_localization::DecisionCode::LOCAL_MAP_INSUFFICIENT;
+    return RegistrationInputStatus::REGISTRATION_REJECTED;
   }
   if (std::chrono::steady_clock::now() >= task->deadline) {
-    return ndt_localization::DecisionCode::REGISTRATION_TIMEOUT;
+    return RegistrationInputStatus::REGISTRATION_REJECTED;
   }
-  return ndt_localization::DecisionCode::NONE;
+  return RegistrationInputStatus::READY;
 }
 
 bool LocalizationNode::runRegistration(
   const RegistrationInput & input,
-  ScanMetrics * metrics,
   Eigen::Isometry3d * optimized_pose)
 {
-  const auto matcher_start = std::chrono::steady_clock::now();
   this->ndt_.setInputTarget(input.target);
   this->ndt_.setInputSource(input.scan);
   pcl::PointCloud<PointType> aligned_cloud;
   this->ndt_.align(
     aligned_cloud, input.pose_guess.matrix().cast<float>());
-  metrics->matcher_ms = elapsedMilliseconds(matcher_start);
-  metrics->converged = this->ndt_.hasConverged();
-  metrics->iterations = this->ndt_.getFinalNumIteration();
-  if (!metrics->converged) {
+  if (!this->ndt_.hasConverged()) {
     return false;
   }
   optimized_pose->matrix() =
@@ -1109,33 +883,11 @@ bool LocalizationNode::runRegistration(
   return true;
 }
 
-void LocalizationNode::publishLateTimeoutResult(
-  const std::shared_ptr<ScanTask> & task,
-  const ScanMetrics & metrics,
-  bool rejection_published)
-{
-  if (rejection_published &&
-    task->decision ==
-    ndt_localization::DecisionCode::REGISTRATION_TIMEOUT)
-  {
-    this->publishLateResultDiagnostic(
-      *task, metrics.matcher_ms,
-      elapsedMilliseconds(task->received_at));
-  }
-}
-
 void LocalizationNode::commitRegistrationResult(
   const std::shared_ptr<ScanTask> & task,
-  const Eigen::Isometry3d & candidate_correction,
-  const std::chrono::steady_clock::time_point & validation_start,
-  ScanMetrics metrics)
+  const Eigen::Isometry3d & candidate_correction)
 {
-  bool publish_scan = false;
-  bool publish_late = false;
   bool entered_lost = false;
-  bool initialization_confirmed = false;
-  ndt_localization::DecisionCode confirmation_code =
-    ndt_localization::DecisionCode::NONE;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
     const auto now = std::chrono::steady_clock::now();
@@ -1152,22 +904,13 @@ void LocalizationNode::commitRegistrationResult(
     const bool is_tracking =
       decision_state == ndt_localization::LocalizationState::TRACKING;
     if (task->decided) {
-      publish_late = true;
+      // A newer task or the watchdog already decided this task.
     } else if (public_deadline_expired) {
       task->decided = true;
-      task->decision =
-        ndt_localization::DecisionCode::REGISTRATION_TIMEOUT;
-      metrics.deadline_exceeded = true;
       entered_lost = this->applyRejectionStateLocked(true);
-      publish_scan = true;
-      publish_late = true;
     } else if (task->generation != this->latest_scan_generation_) {
       task->decided = true;
-      task->decision =
-        ndt_localization::DecisionCode::RESULT_GENERATION_STALE;
       this->applyRejectionStateLocked(false);
-      publish_scan = true;
-      publish_late = true;
     } else if (is_initializing || is_relocalizing) {
       const ndt_localization::InitializationObservation observation =
         this->state_machine_->observeInitializationCorrection(
@@ -1175,63 +918,25 @@ void LocalizationNode::commitRegistrationResult(
         kMaximumConfirmationTranslationDeltaM,
         kMaximumConfirmationRotationDeltaDeg);
       task->decided = true;
-      task->decision = observation.code;
-      metrics.translation_delta_m = observation.translation_delta_m;
-      metrics.rotation_delta_deg = observation.rotation_delta_deg;
-      metrics.accepted = observation.confirmed;
-      initialization_confirmed = observation.confirmed;
-      confirmation_code = observation.code;
       if (observation.confirmed) {
         this->initialization_attempt_active_ = false;
         this->initialization_search_required_ = false;
         this->pending_initialization_task_.reset();
         ++this->initialization_generation_;
       }
-      publish_scan = true;
     } else if (is_tracking) {
       task->decided = true;
-      if (this->state_machine_->applyTrackingCorrection(
-          candidate_correction))
-      {
-        task->decision =
-          ndt_localization::DecisionCode::TRACKING_ACCEPTED;
-        metrics.accepted = true;
-      } else {
-        task->decision = ndt_localization::DecisionCode::STATE_LOST;
-      }
-      publish_scan = true;
+      this->state_machine_->applyTrackingCorrection(
+        candidate_correction);
     } else {
       task->decided = true;
-      task->decision = ndt_localization::DecisionCode::STATE_LOST;
-      publish_scan = true;
     }
     if (this->active_scan_task_ == task) {
       this->active_scan_task_.reset();
     }
   }
   this->registration_cv_.notify_all();
-  metrics.validation_ms = elapsedMilliseconds(validation_start);
-  metrics.decision = task->decision;
-  metrics.total_ms = elapsedMilliseconds(task->received_at);
-  metrics.input_age_ms =
-    (this->now() -
-    rclcpp::Time(task->message->header.stamp)).seconds() * 1000.0;
-  if (publish_scan) {
-    this->publishScanDiagnostic(task->message->header.stamp, metrics);
-  }
-  if (publish_late) {
-    this->publishLateResultDiagnostic(
-      *task, metrics.matcher_ms, metrics.total_ms);
-  }
-  if (initialization_confirmed) {
-    this->publishStateDiagnostic(
-      task->message->header.stamp,
-      confirmation_code);
-  }
   if (entered_lost) {
-    this->publishStateDiagnostic(
-      task->message->header.stamp,
-      ndt_localization::DecisionCode::TRACKING_LOST);
     this->startRelocalization(task->message->header.stamp);
   }
 }
@@ -1239,14 +944,6 @@ void LocalizationNode::commitRegistrationResult(
 void LocalizationNode::processScanTask(
   const std::shared_ptr<ScanTask> & task)
 {
-  ScanMetrics metrics;
-  metrics.generation = task->generation;
-  metrics.raw_scan_points =
-    static_cast<std::size_t>(task->message->width) *
-    task->message->height;
-  metrics.queue_wait_ms =
-    durationMilliseconds(task->received_at, task->started_at);
-
   ndt_localization::OdometryLookup synchronized_odometry;
   {
     std::lock_guard<std::mutex> lock(this->odometry_mutex_);
@@ -1254,13 +951,8 @@ void LocalizationNode::processScanTask(
       rclcpp::Time(task->message->header.stamp).nanoseconds(),
       kMaximumOdometryInterpolationGapSeconds);
   }
-  metrics.odometry_before_gap_ms =
-    synchronized_odometry.before_gap_seconds * 1000.0;
-  metrics.odometry_after_gap_ms =
-    synchronized_odometry.after_gap_seconds * 1000.0;
-  if (!synchronized_odometry.success &&
-    synchronized_odometry.code ==
-    ndt_localization::DecisionCode::ODOMETRY_TOO_NEW)
+  if (synchronized_odometry.status ==
+    ndt_localization::OdometryStatus::TOO_NEW)
   {
     bool requeued = false;
     {
@@ -1283,9 +975,10 @@ void LocalizationNode::processScanTask(
       return;
     }
   }
-  if (!synchronized_odometry.success) {
-    this->finalizeRejectedTask(
-      task, metrics, synchronized_odometry.code, false);
+  if (synchronized_odometry.status !=
+    ndt_localization::OdometryStatus::AVAILABLE)
+  {
+    this->finalizeRejectedTask(task, false);
     return;
   }
 
@@ -1311,36 +1004,30 @@ void LocalizationNode::processScanTask(
   if (processing_state ==
     ndt_localization::LocalizationState::UNINITIALIZED)
   {
-    this->finalizeRejectedTask(
-      task, metrics, ndt_localization::DecisionCode::STATE_UNINITIALIZED,
-      false);
+    this->finalizeRejectedTask(task, false);
     return;
   }
   if (processing_state == ndt_localization::LocalizationState::LOST) {
-    this->finalizeRejectedTask(
-      task, metrics, ndt_localization::DecisionCode::STATE_LOST, false);
+    this->finalizeRejectedTask(task, false);
     return;
   }
 
   RegistrationInput registration_input;
-  const ndt_localization::DecisionCode preparation_result =
+  const RegistrationInputStatus preparation_result =
     this->prepareRegistrationInput(
     task, correction_guess, synchronized_odometry,
-    &metrics, &registration_input);
-  if (preparation_result != ndt_localization::DecisionCode::NONE) {
+    &registration_input);
+  if (preparation_result != RegistrationInputStatus::READY) {
     const bool registration_rejection =
       preparation_result ==
-      ndt_localization::DecisionCode::LOCAL_MAP_INSUFFICIENT ||
-      preparation_result ==
-      ndt_localization::DecisionCode::REGISTRATION_TIMEOUT;
-    this->finalizeRejectedTask(
-      task, metrics, preparation_result, registration_rejection);
+      RegistrationInputStatus::REGISTRATION_REJECTED;
+    this->finalizeRejectedTask(task, registration_rejection);
     return;
   }
 
   Eigen::Isometry3d optimized_pose = Eigen::Isometry3d::Identity();
   const bool converged = this->runRegistration(
-    registration_input, &metrics, &optimized_pose);
+    registration_input, &optimized_pose);
 
   bool task_already_decided = false;
   {
@@ -1354,49 +1041,30 @@ void LocalizationNode::processScanTask(
   }
   if (task_already_decided) {
     this->registration_cv_.notify_all();
-    this->publishLateResultDiagnostic(
-      *task, metrics.matcher_ms,
-      elapsedMilliseconds(task->received_at));
     return;
   }
   if (!converged) {
-    const bool published = this->finalizeRejectedTask(
-      task, metrics,
-      ndt_localization::DecisionCode::MATCHER_NOT_CONVERGED, true);
-    this->publishLateTimeoutResult(task, metrics, published);
+    this->finalizeRejectedTask(task, true);
     return;
   }
 
-  const auto validation_start = std::chrono::steady_clock::now();
-  const ndt_localization::TransformValidation pose_validation =
-    ndt_localization::validateTransformCandidate(
+  if (!ndt_localization::validTransformCandidate(
     registration_input.pose_guess, optimized_pose,
     this->maximum_result_translation_delta_m_,
-    this->maximum_result_rotation_delta_deg_);
-  metrics.translation_delta_m =
-    pose_validation.translation_delta_m;
-  metrics.rotation_delta_deg =
-    pose_validation.rotation_delta_deg;
-  if (!pose_validation.valid) {
-    metrics.validation_ms = elapsedMilliseconds(validation_start);
-    const bool published = this->finalizeRejectedTask(
-      task, metrics, pose_validation.code, true);
-    this->publishLateTimeoutResult(task, metrics, published);
+    this->maximum_result_rotation_delta_deg_))
+  {
+    this->finalizeRejectedTask(task, true);
     return;
   }
   const Eigen::Isometry3d candidate_correction =
     optimized_pose * synchronized_odometry.pose.inverse();
-  this->commitRegistrationResult(
-    task, candidate_correction, validation_start, metrics);
+  this->commitRegistrationResult(task, candidate_correction);
 }
 
 void LocalizationNode::deadlineWorkerLoop()
 {
   while (true) {
     std::vector<std::pair<std::shared_ptr<ScanTask>, bool>> expired;
-    std::vector<std::shared_ptr<ScanTask>> invalidated;
-    bool initialization_expired = false;
-    InitializationMetrics initialization_metrics;
     {
       std::unique_lock<std::mutex> lock(this->registration_mutex_);
       if (this->stop_registration_threads_) {
@@ -1432,8 +1100,6 @@ void LocalizationNode::deadlineWorkerLoop()
             return;
           }
           task->decided = true;
-          task->decision =
-            ndt_localization::DecisionCode::REGISTRATION_TIMEOUT;
           const bool entered_lost =
             this->applyRejectionStateLocked(true);
           expired.emplace_back(task, entered_lost);
@@ -1445,26 +1111,14 @@ void LocalizationNode::deadlineWorkerLoop()
         std::chrono::steady_clock::now() >=
         this->initialization_attempt_deadline_)
       {
-        initialization_expired = true;
         const bool recovery_expired = this->initialization_recovery_;
-        initialization_metrics.generation =
-          this->initialization_generation_;
-        initialization_metrics.recovery = recovery_expired;
-        initialization_metrics.translation_span_m =
-          this->initialization_search_bounds_.translation_span_m;
-        initialization_metrics.yaw_span_deg =
-          this->initialization_search_bounds_.yaw_span_deg;
-        initialization_metrics.total_ms = this->initialization_timeout_ms_;
-        initialization_metrics.decision = recovery_expired ?
-          ndt_localization::DecisionCode::RELOCALIZATION_SEARCH_TIMEOUT :
-          ndt_localization::DecisionCode::INITIALIZATION_SEARCH_TIMEOUT;
         this->initialization_attempt_active_ = false;
         this->initialization_search_required_ = false;
         ++this->initialization_generation_;
         this->pending_initialization_task_.reset();
         this->active_initialization_task_.reset();
         this->state_machine_->failInitializationAttempt();
-        invalidated = this->invalidateRegistrationWorkLocked();
+        this->invalidateRegistrationWorkLocked();
         if (recovery_expired) {
           this->next_relocalization_attempt_ =
             std::chrono::steady_clock::now() +
@@ -1476,249 +1130,12 @@ void LocalizationNode::deadlineWorkerLoop()
       }
     }
     this->registration_cv_.notify_all();
-    this->publishSupersededTasks(invalidated);
-    if (initialization_expired) {
-      const builtin_interfaces::msg::Time stamp = this->now();
-      this->publishInitializationDiagnostic(
-        stamp, initialization_metrics);
-      this->publishStateDiagnostic(
-        stamp, initialization_metrics.decision);
-    }
     for (const auto & item : expired) {
-      const auto & task = item.first;
-      ScanMetrics metrics;
-      metrics.decision =
-        ndt_localization::DecisionCode::REGISTRATION_TIMEOUT;
-      metrics.generation = task->generation;
-      metrics.deadline_exceeded =
-        ndt_localization::deadlineExpired(
-        steadyNanoseconds(task->received_at),
-        steadyNanoseconds(std::chrono::steady_clock::now()),
-        this->registration_deadline_ms_);
-      metrics.raw_scan_points =
-        static_cast<std::size_t>(task->message->width) *
-        task->message->height;
-      metrics.total_ms = elapsedMilliseconds(task->received_at);
-      metrics.queue_wait_ms =
-        task->started_at == std::chrono::steady_clock::time_point() ?
-        metrics.total_ms :
-        durationMilliseconds(task->received_at, task->started_at);
-      metrics.input_age_ms =
-        (this->now() -
-        rclcpp::Time(task->message->header.stamp)).seconds() * 1000.0;
-      this->publishScanDiagnostic(
-        task->message->header.stamp, metrics);
       if (item.second) {
-        this->publishStateDiagnostic(
-          task->message->header.stamp,
-          ndt_localization::DecisionCode::TRACKING_LOST);
-        this->startRelocalization(task->message->header.stamp);
+        this->startRelocalization(
+          item.first->message->header.stamp);
       }
     }
-  }
-}
-
-void LocalizationNode::publishLateResultDiagnostic(
-  const ScanTask & task,
-  double matcher_ms,
-  double completion_ms)
-{
-  diagnostic_msgs::msg::DiagnosticArray message;
-  message.header.stamp = task.message->header.stamp;
-  diagnostic_msgs::msg::DiagnosticStatus status;
-  status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
-  status.name = "ndt_localization/late_result";
-  status.hardware_id = "localization_node";
-  status.message =
-    ndt_localization::toString(
-    ndt_localization::DecisionCode::RESULT_GENERATION_STALE);
-  status.values = {
-    keyValue(
-      "reason", ndt_localization::toString(task.decision)),
-    numericKeyValue("generation", task.generation),
-    numericKeyValue("matcher_ms", matcher_ms),
-    numericKeyValue("completion_ms", completion_ms),
-  };
-  message.status.push_back(std::move(status));
-  this->diagnostic_pub_->publish(message);
-}
-
-void LocalizationNode::publishScanDiagnostic(
-  const builtin_interfaces::msg::Time & stamp,
-  const ScanMetrics & metrics)
-{
-  diagnostic_msgs::msg::DiagnosticArray message;
-  message.header.stamp = stamp;
-  diagnostic_msgs::msg::DiagnosticStatus status;
-  status.level = metrics.accepted ?
-    diagnostic_msgs::msg::DiagnosticStatus::OK :
-    diagnostic_msgs::msg::DiagnosticStatus::WARN;
-  status.name = "ndt_localization/scan";
-  status.hardware_id = "localization_node";
-  status.message = ndt_localization::toString(metrics.decision);
-  status.values = {
-    keyValue("decision", status.message),
-    keyValue("accepted", metrics.accepted ? "true" : "false"),
-    keyValue("converged", metrics.converged ? "true" : "false"),
-    keyValue(
-      "state",
-      ndt_localization::toString(this->state_machine_->state())),
-    keyValue(
-      "correction_valid",
-      this->state_machine_->hasValidCorrection() ? "true" : "false"),
-    numericKeyValue(
-      "confirmation_count",
-      this->state_machine_->confirmationCount()),
-    numericKeyValue(
-      "consecutive_rejections",
-      this->state_machine_->consecutiveRejections()),
-    numericKeyValue("conversion_ms", metrics.conversion_ms),
-    numericKeyValue("local_map_ms", metrics.local_map_ms),
-    numericKeyValue("matcher_ms", metrics.matcher_ms),
-    numericKeyValue("validation_ms", metrics.validation_ms),
-    numericKeyValue("total_ms", metrics.total_ms),
-    numericKeyValue("queue_wait_ms", metrics.queue_wait_ms),
-    numericKeyValue("input_age_ms", metrics.input_age_ms),
-    numericKeyValue(
-      "decision_deadline_ms", this->registration_deadline_ms_),
-    keyValue(
-      "deadline_exceeded",
-      metrics.deadline_exceeded ? "true" : "false"),
-    numericKeyValue(
-      "odometry_before_gap_ms", metrics.odometry_before_gap_ms),
-    numericKeyValue(
-      "odometry_after_gap_ms", metrics.odometry_after_gap_ms),
-    numericKeyValue(
-      "translation_delta_m", metrics.translation_delta_m),
-    numericKeyValue(
-      "rotation_delta_deg", metrics.rotation_delta_deg),
-    numericKeyValue(
-      "scan_points_raw", metrics.raw_scan_points),
-    numericKeyValue(
-      "scan_points_filtered", metrics.filtered_scan_points),
-    numericKeyValue(
-      "scan_points_capped", metrics.capped_scan_points),
-    numericKeyValue("map_points_raw", this->raw_map_points_),
-    numericKeyValue("target_points", metrics.target_points),
-    numericKeyValue("generation", metrics.generation),
-    numericKeyValue("iterations", metrics.iterations),
-  };
-  message.status.push_back(std::move(status));
-  this->diagnostic_pub_->publish(message);
-}
-
-void LocalizationNode::publishInitializationDiagnostic(
-  const builtin_interfaces::msg::Time & stamp,
-  const InitializationMetrics & metrics)
-{
-  diagnostic_msgs::msg::DiagnosticArray message;
-  message.header.stamp = stamp;
-  diagnostic_msgs::msg::DiagnosticStatus status;
-  status.level = metrics.success ?
-    diagnostic_msgs::msg::DiagnosticStatus::OK :
-    metrics.ambiguous ?
-    diagnostic_msgs::msg::DiagnosticStatus::WARN :
-    diagnostic_msgs::msg::DiagnosticStatus::ERROR;
-  status.name = "ndt_localization/initialization_search";
-  status.hardware_id = "localization_node";
-  status.message = ndt_localization::toString(metrics.decision);
-  status.values = {
-    keyValue("decision", status.message),
-    keyValue("success", metrics.success ? "true" : "false"),
-    keyValue("ambiguous", metrics.ambiguous ? "true" : "false"),
-    keyValue("recovery", metrics.recovery ? "true" : "false"),
-    keyValue(
-      "state",
-      ndt_localization::toString(this->state_machine_->state())),
-    numericKeyValue("generation", metrics.generation),
-    numericKeyValue("hypotheses", metrics.hypotheses),
-    numericKeyValue("evaluated", metrics.evaluated),
-    numericKeyValue("converged", metrics.converged),
-    numericKeyValue("refined", metrics.refined),
-    numericKeyValue("scan_points", metrics.scan_points),
-    numericKeyValue("target_points", metrics.target_points),
-    numericKeyValue("best_score", metrics.best_score),
-    numericKeyValue("second_score", metrics.second_score),
-    numericKeyValue("score_margin", metrics.score_margin),
-    numericKeyValue("coarse_ms", metrics.coarse_ms),
-    numericKeyValue("refinement_ms", metrics.refinement_ms),
-    numericKeyValue("total_ms", metrics.total_ms),
-    numericKeyValue(
-      "translation_span_m", metrics.translation_span_m),
-    numericKeyValue("yaw_span_deg", metrics.yaw_span_deg),
-    numericKeyValue(
-      "initialization_deadline_ms", this->initialization_timeout_ms_),
-  };
-  message.status.push_back(std::move(status));
-  this->diagnostic_pub_->publish(message);
-  RCLCPP_INFO(
-    this->get_logger(),
-    "Initialization search generation %s: %s, %zu/%zu converged, "
-    "%zu refined, score %.6f, margin %.6f, %.3f ms",
-    std::to_string(metrics.generation).c_str(),
-    ndt_localization::toString(metrics.decision),
-    metrics.converged, metrics.evaluated, metrics.refined,
-    metrics.best_score, metrics.score_margin, metrics.total_ms);
-}
-
-void LocalizationNode::publishStateDiagnostic(
-  const builtin_interfaces::msg::Time & stamp,
-  ndt_localization::DecisionCode code)
-{
-  diagnostic_msgs::msg::DiagnosticArray message;
-  message.header.stamp = stamp;
-  diagnostic_msgs::msg::DiagnosticStatus status;
-  const bool healthy =
-    code == ndt_localization::DecisionCode::INITIALIZATION_STARTED ||
-    code ==
-    ndt_localization::DecisionCode::INITIALIZATION_HYPOTHESIS_SELECTED ||
-    code == ndt_localization::DecisionCode::INITIALIZATION_CONFIRMED ||
-    code == ndt_localization::DecisionCode::RELOCALIZATION_STARTED ||
-    code ==
-    ndt_localization::DecisionCode::RELOCALIZATION_HYPOTHESIS_SELECTED ||
-    code == ndt_localization::DecisionCode::RELOCALIZATION_CONFIRMED ||
-    code == ndt_localization::DecisionCode::TRACKING_ACCEPTED;
-  const bool waiting =
-    code ==
-    ndt_localization::DecisionCode::INITIAL_POSE_WAITING_FOR_ODOMETRY;
-  status.level = healthy ?
-    diagnostic_msgs::msg::DiagnosticStatus::OK :
-    waiting ?
-    diagnostic_msgs::msg::DiagnosticStatus::WARN :
-    diagnostic_msgs::msg::DiagnosticStatus::ERROR;
-  status.name = "ndt_localization/state";
-  status.hardware_id = "localization_node";
-  status.message = ndt_localization::toString(code);
-  std::size_t buffer_size = 0;
-  {
-    std::lock_guard<std::mutex> lock(this->odometry_mutex_);
-    buffer_size = this->odometry_buffer_->size();
-  }
-  status.values = {
-    keyValue("reason", status.message),
-    keyValue(
-      "state",
-      ndt_localization::toString(this->state_machine_->state())),
-    keyValue(
-      "correction_valid",
-      this->state_machine_->hasValidCorrection() ? "true" : "false"),
-    numericKeyValue(
-      "confirmation_count",
-      this->state_machine_->confirmationCount()),
-    numericKeyValue("odometry_buffer_samples", buffer_size),
-  };
-  message.status.push_back(std::move(status));
-  this->diagnostic_pub_->publish(message);
-  if (healthy || waiting) {
-    RCLCPP_INFO(
-      this->get_logger(), "State event: %s (%s)",
-      ndt_localization::toString(code),
-      ndt_localization::toString(this->state_machine_->state()));
-  } else {
-    RCLCPP_WARN(
-      this->get_logger(), "State rejection: %s (%s)",
-      ndt_localization::toString(code),
-      ndt_localization::toString(this->state_machine_->state()));
   }
 }
 
@@ -1726,26 +1143,14 @@ void LocalizationNode::initialPoseCallback(
   const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg)
 {
   if (!this->map_initialized_.load(std::memory_order_acquire)) {
-    this->publishStateDiagnostic(
-      msg->header.stamp,
-      ndt_localization::DecisionCode::MAP_UNAVAILABLE);
     return;
   }
   if (normalizedFrame(msg->header.frame_id) != this->global_frame_id_) {
-    this->publishStateDiagnostic(
-      msg->header.stamp,
-      ndt_localization::DecisionCode::INITIAL_POSE_FRAME_INVALID);
     return;
   }
-  const ndt_localization::DecisionCode timestamp_result =
-    this->validateTimestamp(
-    msg->header.stamp, kMaximumInitialPoseAgeSeconds,
-    ndt_localization::DecisionCode::INITIAL_POSE_STAMP_INVALID,
-    ndt_localization::DecisionCode::INITIAL_POSE_STALE,
-    ndt_localization::DecisionCode::INITIAL_POSE_FUTURE,
-    nullptr);
-  if (timestamp_result != ndt_localization::DecisionCode::NONE) {
-    this->publishStateDiagnostic(msg->header.stamp, timestamp_result);
+  if (!this->validTimestamp(
+      msg->header.stamp, kMaximumInitialPoseAgeSeconds))
+  {
     return;
   }
 
@@ -1773,12 +1178,9 @@ void LocalizationNode::initialPoseCallback(
     this->initialization_maximum_translation_span_m_;
   limits.maximum_yaw_stddev_deg =
     this->initialization_maximum_yaw_span_deg_;
-  const ndt_localization::ValidationResult pose_validation =
-    ndt_localization::validateInitialPoseData(
-    position, orientation, covariance, limits);
-  if (!pose_validation.valid) {
-    this->publishStateDiagnostic(
-      msg->header.stamp, pose_validation.code);
+  if (!ndt_localization::validInitialPoseData(
+      position, orientation, covariance, limits))
+  {
     return;
   }
   const double position_stddev_m = std::sqrt(
@@ -1806,11 +1208,10 @@ void LocalizationNode::initialPoseCallback(
   }
   const Eigen::Isometry3d initial_pose =
     poseToIsometry(msg->pose.pose);
-  if (!synchronized_odometry.success &&
-    (synchronized_odometry.code ==
-    ndt_localization::DecisionCode::ODOMETRY_UNAVAILABLE ||
-    synchronized_odometry.code ==
-    ndt_localization::DecisionCode::ODOMETRY_TOO_NEW))
+  if (synchronized_odometry.status ==
+    ndt_localization::OdometryStatus::UNAVAILABLE ||
+    synchronized_odometry.status ==
+    ndt_localization::OdometryStatus::TOO_NEW)
   {
     {
       std::lock_guard<std::mutex> pending_lock(this->pending_mutex_);
@@ -1819,14 +1220,11 @@ void LocalizationNode::initialPoseCallback(
       this->pending_initial_pose_ = initial_pose;
       this->pending_initialization_search_bounds_ = search_bounds;
     }
-    this->publishStateDiagnostic(
-      msg->header.stamp,
-      ndt_localization::DecisionCode::INITIAL_POSE_WAITING_FOR_ODOMETRY);
     return;
   }
-  if (!synchronized_odometry.success) {
-    this->publishStateDiagnostic(
-      msg->header.stamp, synchronized_odometry.code);
+  if (synchronized_odometry.status !=
+    ndt_localization::OdometryStatus::AVAILABLE)
+  {
     return;
   }
   this->beginInitialization(
@@ -1845,10 +1243,9 @@ void LocalizationNode::beginInitialization(
     initial_pose, synchronized_odometry);
   const Eigen::Isometry3d prior_correction =
     constrained_initial_pose * synchronized_odometry.inverse();
-  std::vector<std::shared_ptr<ScanTask>> invalidated;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
-    invalidated = this->invalidateRegistrationWorkLocked();
+    this->invalidateRegistrationWorkLocked();
     this->initialization_stamp_ns_.store(
       rclcpp::Time(stamp).nanoseconds(), std::memory_order_release);
     ++this->initialization_generation_;
@@ -1869,10 +1266,7 @@ void LocalizationNode::beginInitialization(
     std::lock_guard<std::mutex> pending_lock(this->pending_mutex_);
     this->initial_pose_waiting_for_odometry_ = false;
   }
-  this->publishSupersededTasks(invalidated);
   this->registration_cv_.notify_all();
-  this->publishStateDiagnostic(
-    stamp, ndt_localization::DecisionCode::INITIALIZATION_STARTED);
   RCLCPP_INFO(
     this->get_logger(),
     "Accepted initial-pose prior at %.6f; searching %.2f m / %.1f deg "
@@ -1886,7 +1280,6 @@ bool LocalizationNode::startRelocalization(
   const builtin_interfaces::msg::Time & stamp,
   bool ignore_retry_delay)
 {
-  std::vector<std::shared_ptr<ScanTask>> invalidated;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
     const auto now = std::chrono::steady_clock::now();
@@ -1897,7 +1290,7 @@ bool LocalizationNode::startRelocalization(
     if (!this->state_machine_->getValidCorrection(&correction)) {
       return false;
     }
-    invalidated = this->invalidateRegistrationWorkLocked();
+    this->invalidateRegistrationWorkLocked();
     ++this->initialization_generation_;
     this->initialization_attempt_active_ = true;
     this->initialization_search_required_ = true;
@@ -1917,10 +1310,7 @@ bool LocalizationNode::startRelocalization(
     this->active_initialization_task_.reset();
     this->state_machine_->beginRelocalization(correction);
   }
-  this->publishSupersededTasks(invalidated);
   this->registration_cv_.notify_all();
-  this->publishStateDiagnostic(
-    stamp, ndt_localization::DecisionCode::RELOCALIZATION_STARTED);
   return true;
 }
 
@@ -1955,14 +1345,9 @@ void LocalizationNode::tryStartPendingInitialization()
     pending_pose = this->pending_initial_pose_;
     pending_bounds = this->pending_initialization_search_bounds_;
   }
-  const ndt_localization::DecisionCode timestamp_result =
-    this->validateTimestamp(
-    pending_stamp, kMaximumInitialPoseAgeSeconds,
-    ndt_localization::DecisionCode::INITIAL_POSE_STAMP_INVALID,
-    ndt_localization::DecisionCode::INITIAL_POSE_STALE,
-    ndt_localization::DecisionCode::INITIAL_POSE_FUTURE,
-    nullptr);
-  if (timestamp_result != ndt_localization::DecisionCode::NONE) {
+  if (!this->validTimestamp(
+      pending_stamp, kMaximumInitialPoseAgeSeconds))
+  {
     {
       std::lock_guard<std::mutex> pending_lock(this->pending_mutex_);
       if (rclcpp::Time(this->pending_initial_pose_stamp_) ==
@@ -1971,7 +1356,6 @@ void LocalizationNode::tryStartPendingInitialization()
         this->initial_pose_waiting_for_odometry_ = false;
       }
     }
-    this->publishStateDiagnostic(pending_stamp, timestamp_result);
     return;
   }
   ndt_localization::OdometryLookup synchronized_odometry;
@@ -1981,7 +1365,9 @@ void LocalizationNode::tryStartPendingInitialization()
       rclcpp::Time(pending_stamp).nanoseconds(),
       kMaximumOdometryInterpolationGapSeconds);
   }
-  if (synchronized_odometry.success) {
+  if (synchronized_odometry.status ==
+    ndt_localization::OdometryStatus::AVAILABLE)
+  {
     {
       std::lock_guard<std::mutex> pending_lock(this->pending_mutex_);
       if (!this->initial_pose_waiting_for_odometry_ ||
@@ -1998,8 +1384,8 @@ void LocalizationNode::tryStartPendingInitialization()
       synchronized_odometry.pose,
       pending_bounds);
   } else if (
-    synchronized_odometry.code ==
-    ndt_localization::DecisionCode::ODOMETRY_TOO_OLD)
+    synchronized_odometry.status ==
+    ndt_localization::OdometryStatus::TOO_OLD)
   {
     {
       std::lock_guard<std::mutex> pending_lock(this->pending_mutex_);
@@ -2009,8 +1395,6 @@ void LocalizationNode::tryStartPendingInitialization()
         this->initial_pose_waiting_for_odometry_ = false;
       }
     }
-    this->publishStateDiagnostic(
-      pending_stamp, synchronized_odometry.code);
   }
 }
 

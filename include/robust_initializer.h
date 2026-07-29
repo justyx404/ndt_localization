@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <cstddef>
-#include <limits>
 #include <memory>
 
 #include "localization_core.h"
@@ -55,31 +54,12 @@ public:
     std::chrono::steady_clock::time_point deadline;
   };
 
-  struct Result
-  {
-    bool success = false;
-    bool timed_out = false;
-    bool ambiguous = false;
-    DecisionCode code = DecisionCode::INITIALIZATION_SEARCH_FAILED;
-    Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
-    std::size_t hypotheses = 0;
-    std::size_t evaluated = 0;
-    std::size_t converged = 0;
-    std::size_t refined = 0;
-    std::size_t scan_points = 0;
-    std::size_t target_points = 0;
-    double best_score = std::numeric_limits<double>::infinity();
-    double second_score = std::numeric_limits<double>::infinity();
-    double score_margin = std::numeric_limits<double>::infinity();
-    double coarse_ms = 0.0;
-    double refinement_ms = 0.0;
-    double total_ms = 0.0;
-  };
-
   explicit RobustInitializer(const Config & config);
 
   void setMap(const Cloud::ConstPtr & map);
-  Result search(const Request & request);
+  bool search(
+    const Request & request,
+    Eigen::Isometry3d * selected_pose);
 
 private:
   Eigen::Isometry3d applyOffset(

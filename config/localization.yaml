@@ -1,8 +1,8 @@
 /**:
   ros__parameters:
     # Deliberately small deployment interface. Numerical tolerances, queue
-    # policy, coarse-search mechanics, and diagnostic policy are internal
-    # compiled implementation defaults in the ndt_localization package.
+    # policy and coarse-search mechanics are internal compiled implementation
+    # defaults in the ndt_localization package.
     localization:
       # Registration quality and workload.
       ndt_resolution: 1.0

@@ -9,6 +9,7 @@ Phase 3 completed: 2026-07-29
 Replacement Phase 4 completed: 2026-07-29
 Post-Phase 4 refactor cleanup completed: 2026-07-29
 Production packaging cleanup completed: 2026-07-29
+Production diagnostic removal completed: 2026-07-29
 Package: `ndt_localization`
 
 ## 1. Objective
@@ -300,7 +301,8 @@ These values are initial engineering targets and will be finalized after measuri
 - A failed/ambiguous initialization must not be accepted merely to meet the deadline.
 - Zero known false-positive acceptances in the complete benchmark suite.
 - Provisional successful-pose threshold: within 0.5 m and 5 degrees of the reconstructed reference after confirmation.
-- Initialization success and failure must be observable through diagnostics.
+- Initialization success and failure must be testable without requiring a
+  production diagnostic topic.
 
 ### 9.3 Regression
 
@@ -428,6 +430,13 @@ semantics. Evidence is recorded in
 After validation, the replay-only Python executables, launch file, YAML files,
 and Python benchmark tests were removed from the production package. The
 validated reports remain as non-installed historical evidence in `benchmark/`.
+
+The production diagnostic publishers and the flattened 55-value
+`DecisionCode` taxonomy were subsequently removed at the operator's request.
+Only behavior-driving state, odometry lookup status, and narrow local control
+outcomes remain. Registration validation, stale-result rejection, recovery,
+and deadline enforcement are unchanged. Evidence is recorded in
+`benchmark/PRODUCTION_DIAGNOSTIC_REMOVAL.md`.
 
 ### Phase 5: Held-out validation
 

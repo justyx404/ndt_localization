@@ -1,7 +1,6 @@
 #include "robust_initializer.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <vector>
 
@@ -9,13 +8,6 @@ namespace
 {
 
 constexpr double kPi = 3.14159265358979323846;
-
-double elapsedMilliseconds(
-  const std::chrono::steady_clock::time_point & start)
-{
-  return std::chrono::duration<double, std::milli>(
-    std::chrono::steady_clock::now() - start).count();
-}
 
 bool beforeDeadline(
   const std::chrono::steady_clock::time_point & deadline)
@@ -73,32 +65,26 @@ void RobustInitializer::configureRefinementMatcher(
     config_.refinement_maximum_iterations);
 }
 
-RobustInitializer::Result RobustInitializer::search(
-  const Request & request)
+bool RobustInitializer::search(
+  const Request & request,
+  Eigen::Isometry3d * selected_pose)
 {
-  const auto total_start = std::chrono::steady_clock::now();
-  Result result;
-  if (!map_ || map_->empty() || !request.scan ||
+  if (selected_pose == nullptr || !map_ || map_->empty() || !request.scan ||
     request.scan->empty() || !request.prior_pose.matrix().allFinite())
   {
-    result.total_ms = elapsedMilliseconds(total_start);
-    return result;
+    return false;
   }
 
   const std::vector<HypothesisOffset> offsets =
     deterministicHypothesisOffsets(
     request.bounds, config_.maximum_hypotheses);
-  result.hypotheses = offsets.size();
   const double search_radius =
     config_.local_map_radius_m + request.bounds.translation_span_m;
   Cloud::ConstPtr target = radiusSubmap(
     map_, map_kdtree_, request.prior_pose.translation(),
     search_radius, config_.maximum_local_map_points);
-  result.target_points = target->size();
   if (target->size() < config_.minimum_local_map_points) {
-    result.code = DecisionCode::LOCAL_MAP_INSUFFICIENT;
-    result.total_ms = elapsedMilliseconds(total_start);
-    return result;
+    return false;
   }
 
   Cloud::ConstPtr coarse_target =
@@ -107,11 +93,8 @@ RobustInitializer::Result RobustInitializer::search(
     voxelDownsample(request.scan, config_.coarse_scan_leaf_size_m);
   coarse_scan = deterministicallyCap(
     coarse_scan, config_.maximum_coarse_scan_points);
-  result.scan_points = coarse_scan->size();
   if (coarse_scan->empty()) {
-    result.code = DecisionCode::SCAN_EMPTY;
-    result.total_ms = elapsedMilliseconds(total_start);
-    return result;
+    return false;
   }
 
   pcl::NormalDistributionsTransform<Point, Point> coarse_matcher;
@@ -119,7 +102,6 @@ RobustInitializer::Result RobustInitializer::search(
   coarse_matcher.setInputTarget(coarse_target);
   coarse_matcher.setInputSource(coarse_scan);
   std::vector<ScoredPose> coarse_candidates;
-  const auto coarse_start = std::chrono::steady_clock::now();
   const auto coarse_deadline =
     request.deadline -
     std::chrono::duration_cast<std::chrono::steady_clock::duration>(
@@ -127,14 +109,12 @@ RobustInitializer::Result RobustInitializer::search(
       config_.refinement_reserve_ms));
   for (const HypothesisOffset & offset : offsets) {
     if (!beforeDeadline(coarse_deadline)) {
-      result.timed_out = true;
       break;
     }
     Cloud aligned;
     coarse_matcher.align(
       aligned,
       applyOffset(request.prior_pose, offset).matrix().cast<float>());
-    ++result.evaluated;
     if (!coarse_matcher.hasConverged()) {
       continue;
     }
@@ -146,19 +126,13 @@ RobustInitializer::Result RobustInitializer::search(
     if (!std::isfinite(fitness) || !pose.matrix().allFinite()) {
       continue;
     }
-    ++result.converged;
     ScoredPose candidate;
     candidate.pose = pose;
     candidate.score = fitness;
     coarse_candidates.push_back(candidate);
   }
-  result.coarse_ms = elapsedMilliseconds(coarse_start);
   if (coarse_candidates.empty()) {
-    result.code = result.timed_out ?
-      DecisionCode::INITIALIZATION_SEARCH_TIMEOUT :
-      DecisionCode::INITIALIZATION_SEARCH_FAILED;
-    result.total_ms = elapsedMilliseconds(total_start);
-    return result;
+    return false;
   }
 
   std::sort(
@@ -171,11 +145,11 @@ RobustInitializer::Result RobustInitializer::search(
   for (const ScoredPose & candidate : coarse_candidates) {
     bool distinct = true;
     for (const ScoredPose & seed : refinement_seeds) {
-      const TransformValidation comparison = validateTransformCandidate(
-        seed.pose, candidate.pose,
-        config_.distinct_translation_m,
-        config_.distinct_rotation_deg);
-      if (comparison.valid) {
+      if (validTransformCandidate(
+          seed.pose, candidate.pose,
+          config_.distinct_translation_m,
+          config_.distinct_rotation_deg))
+      {
         distinct = false;
         break;
       }
@@ -197,10 +171,8 @@ RobustInitializer::Result RobustInitializer::search(
   refinement_matcher.setInputTarget(target);
   refinement_matcher.setInputSource(refinement_scan);
   std::vector<ScoredPose> refined_candidates;
-  const auto refinement_start = std::chrono::steady_clock::now();
   for (const ScoredPose & seed : refinement_seeds) {
     if (!beforeDeadline(request.deadline)) {
-      result.timed_out = true;
       break;
     }
     Cloud aligned;
@@ -221,32 +193,18 @@ RobustInitializer::Result RobustInitializer::search(
     candidate.pose = pose;
     candidate.score = fitness;
     refined_candidates.push_back(candidate);
-    ++result.refined;
   }
-  result.refinement_ms = elapsedMilliseconds(refinement_start);
   const HypothesisSelection selection = selectBestHypothesis(
     refined_candidates,
     config_.maximum_fitness_score,
     config_.minimum_score_margin,
     config_.distinct_translation_m,
     config_.distinct_rotation_deg);
-  result.best_score = selection.best_score;
-  result.second_score = selection.second_score;
-  result.score_margin = selection.score_margin;
-  result.ambiguous = selection.ambiguous;
-  if (selection.valid) {
-    result.success = true;
-    result.pose = refined_candidates[selection.best_index].pose;
-    result.code = DecisionCode::INITIALIZATION_HYPOTHESIS_SELECTED;
-  } else if (selection.ambiguous) {
-    result.code = DecisionCode::INITIALIZATION_AMBIGUOUS;
-  } else if (result.timed_out) {
-    result.code = DecisionCode::INITIALIZATION_SEARCH_TIMEOUT;
-  } else {
-    result.code = DecisionCode::INITIALIZATION_SEARCH_FAILED;
+  if (!selection.valid) {
+    return false;
   }
-  result.total_ms = elapsedMilliseconds(total_start);
-  return result;
+  *selected_pose = refined_candidates[selection.best_index].pose;
+  return true;
 }
 
 }  // namespace ndt_localization

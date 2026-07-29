@@ -47,8 +47,8 @@ TEST(OdometryBuffer, InterpolatesPositionAndOrientation)
 
   const auto result = buffer.lookup(11 * kSecond, 1.1);
 
-  ASSERT_TRUE(result.success);
-  EXPECT_EQ(result.code, ndt_localization::DecisionCode::NONE);
+  ASSERT_EQ(
+    result.status, ndt_localization::OdometryStatus::AVAILABLE);
   EXPECT_NEAR(result.pose.translation().x(), 2.0, 1.0e-9);
   const Eigen::AngleAxisd rotation(result.pose.rotation());
   EXPECT_NEAR(rotation.angle() * 180.0 / kPi, 45.0, 1.0e-9);
@@ -57,6 +57,9 @@ TEST(OdometryBuffer, InterpolatesPositionAndOrientation)
 TEST(OdometryBuffer, IsBoundedAndRejectsUnavailableTimes)
 {
   ndt_localization::OdometryBuffer buffer(2.0, 3);
+  EXPECT_EQ(
+    buffer.lookup(10 * kSecond, 1.0).status,
+    ndt_localization::OdometryStatus::UNAVAILABLE);
   buffer.add(10 * kSecond, pose(0.0));
   buffer.add(11 * kSecond, pose(1.0));
   buffer.add(12 * kSecond, pose(2.0));
@@ -64,25 +67,24 @@ TEST(OdometryBuffer, IsBoundedAndRejectsUnavailableTimes)
 
   EXPECT_EQ(buffer.size(), 3u);
   EXPECT_EQ(
-    buffer.lookup(10 * kSecond, 1.0).code,
-    ndt_localization::DecisionCode::ODOMETRY_TOO_OLD);
+    buffer.lookup(10 * kSecond, 1.0).status,
+    ndt_localization::OdometryStatus::TOO_OLD);
   EXPECT_EQ(
-    buffer.lookup(14 * kSecond, 1.0).code,
-    ndt_localization::DecisionCode::ODOMETRY_TOO_NEW);
+    buffer.lookup(14 * kSecond, 1.0).status,
+    ndt_localization::OdometryStatus::TOO_NEW);
   EXPECT_EQ(
-    buffer.lookup(11500 * kSecond / 1000, 0.4).code,
-    ndt_localization::DecisionCode::ODOMETRY_INTERPOLATION_GAP);
+    buffer.lookup(11500 * kSecond / 1000, 0.4).status,
+    ndt_localization::OdometryStatus::INTERPOLATION_GAP);
 }
 
 TEST(InitialPoseValidation, AcceptsFiniteBoundedCovariance)
 {
   ndt_localization::InitialPoseValidationLimits limits;
-  const auto result = ndt_localization::validateInitialPoseData(
+  const bool valid = ndt_localization::validInitialPoseData(
     Eigen::Vector3d(1.0, 2.0, 3.0),
     Eigen::Quaterniond::Identity(), validCovariance(), limits);
 
-  EXPECT_TRUE(result.valid);
-  EXPECT_EQ(result.code, ndt_localization::DecisionCode::NONE);
+  EXPECT_TRUE(valid);
 }
 
 TEST(TimestampValidation, RejectsInvalidStaleAndFutureInputs)
@@ -90,38 +92,27 @@ TEST(TimestampValidation, RejectsInvalidStaleAndFutureInputs)
   const auto validate =
     [](std::int64_t timestamp_ns)
     {
-      return ndt_localization::validateTimestampNanoseconds(
-        timestamp_ns, 10 * kSecond, 1.0, 0.1,
-        ndt_localization::DecisionCode::INITIAL_POSE_STAMP_INVALID,
-        ndt_localization::DecisionCode::INITIAL_POSE_STALE,
-        ndt_localization::DecisionCode::INITIAL_POSE_FUTURE);
+      return ndt_localization::validTimestampNanoseconds(
+        timestamp_ns, 10 * kSecond, 1.0, 0.1);
     };
 
-  EXPECT_EQ(
-    validate(0).code,
-    ndt_localization::DecisionCode::INITIAL_POSE_STAMP_INVALID);
-  EXPECT_EQ(
-    validate(8 * kSecond).code,
-    ndt_localization::DecisionCode::INITIAL_POSE_STALE);
-  EXPECT_EQ(
-    validate(11 * kSecond).code,
-    ndt_localization::DecisionCode::INITIAL_POSE_FUTURE);
-  EXPECT_TRUE(validate(9500 * kSecond / 1000).valid);
+  EXPECT_FALSE(validate(0));
+  EXPECT_FALSE(validate(8 * kSecond));
+  EXPECT_FALSE(validate(11 * kSecond));
+  EXPECT_TRUE(validate(9500 * kSecond / 1000));
 }
 
 TEST(TimestampValidation, InitializationRequiresLaterScans)
 {
-  EXPECT_EQ(
-    ndt_localization::validateInitializationScanTimestamp(
-      9 * kSecond, 10 * kSecond).code,
-    ndt_localization::DecisionCode::SCAN_PRECEDES_INITIALIZATION);
-  EXPECT_EQ(
-    ndt_localization::validateInitializationScanTimestamp(
-      10 * kSecond, 10 * kSecond).code,
-    ndt_localization::DecisionCode::SCAN_PRECEDES_INITIALIZATION);
+  EXPECT_FALSE(
+    ndt_localization::initializationScanFollowsPrior(
+      9 * kSecond, 10 * kSecond));
+  EXPECT_FALSE(
+    ndt_localization::initializationScanFollowsPrior(
+      10 * kSecond, 10 * kSecond));
   EXPECT_TRUE(
-    ndt_localization::validateInitializationScanTimestamp(
-      11 * kSecond, 10 * kSecond).valid);
+    ndt_localization::initializationScanFollowsPrior(
+      11 * kSecond, 10 * kSecond));
 }
 
 TEST(WorkloadBounds, DetectsDeadlineAtBudget)
@@ -247,36 +238,32 @@ TEST(InitialPoseValidation, RejectsMalformedAndAmbiguousInputs)
   ndt_localization::InitialPoseValidationLimits limits;
   auto covariance = validCovariance();
   Eigen::Quaterniond invalid_quaternion(0.0, 0.0, 0.0, 0.0);
-  EXPECT_EQ(
-    ndt_localization::validateInitialPoseData(
+  EXPECT_FALSE(
+    ndt_localization::validInitialPoseData(
       Eigen::Vector3d::Zero(), invalid_quaternion,
-      covariance, limits).code,
-    ndt_localization::DecisionCode::INITIAL_POSE_POSE_INVALID);
+      covariance, limits));
 
   covariance = validCovariance();
   covariance[1] = 1.0;
-  EXPECT_EQ(
-    ndt_localization::validateInitialPoseData(
+  EXPECT_FALSE(
+    ndt_localization::validInitialPoseData(
       Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity(),
-      covariance, limits).code,
-    ndt_localization::DecisionCode::INITIAL_POSE_COVARIANCE_INVALID);
+      covariance, limits));
 
   covariance = validCovariance();
   covariance[0] =
     std::numeric_limits<double>::quiet_NaN();
-  EXPECT_EQ(
-    ndt_localization::validateInitialPoseData(
+  EXPECT_FALSE(
+    ndt_localization::validInitialPoseData(
       Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity(),
-      covariance, limits).code,
-    ndt_localization::DecisionCode::INITIAL_POSE_COVARIANCE_INVALID);
+      covariance, limits));
 
   covariance = validCovariance();
   covariance[0] = 101.0;
-  EXPECT_EQ(
-    ndt_localization::validateInitialPoseData(
+  EXPECT_FALSE(
+    ndt_localization::validInitialPoseData(
       Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity(),
-      covariance, limits).code,
-    ndt_localization::DecisionCode::INITIAL_POSE_COVARIANCE_AMBIGUOUS);
+      covariance, limits));
 }
 
 TEST(TransformValidation, RejectsNonFiniteNonRigidAndLargeJumps)
@@ -284,26 +271,25 @@ TEST(TransformValidation, RejectsNonFiniteNonRigidAndLargeJumps)
   Eigen::Isometry3d candidate = Eigen::Isometry3d::Identity();
   candidate.translation().x() =
     std::numeric_limits<double>::quiet_NaN();
-  EXPECT_EQ(
-    ndt_localization::validateTransformCandidate(
-      Eigen::Isometry3d::Identity(), candidate, 1.0, 20.0).code,
-    ndt_localization::DecisionCode::RESULT_NON_FINITE);
+  EXPECT_FALSE(
+    ndt_localization::validTransformCandidate(
+      Eigen::Isometry3d::Identity(), candidate, 1.0, 20.0));
 
   candidate = Eigen::Isometry3d::Identity();
   candidate.linear()(0, 0) = 2.0;
-  EXPECT_EQ(
-    ndt_localization::validateTransformCandidate(
-      Eigen::Isometry3d::Identity(), candidate, 1.0, 20.0).code,
-    ndt_localization::DecisionCode::RESULT_NOT_RIGID);
+  EXPECT_FALSE(
+    ndt_localization::validTransformCandidate(
+      Eigen::Isometry3d::Identity(), candidate, 1.0, 20.0));
 
-  EXPECT_EQ(
-    ndt_localization::validateTransformCandidate(
-      Eigen::Isometry3d::Identity(), pose(2.0), 1.0, 20.0).code,
-    ndt_localization::DecisionCode::RESULT_TRANSLATION_JUMP);
-  EXPECT_EQ(
-    ndt_localization::validateTransformCandidate(
-      Eigen::Isometry3d::Identity(), pose(0.0, 30.0), 1.0, 20.0).code,
-    ndt_localization::DecisionCode::RESULT_ROTATION_JUMP);
+  EXPECT_FALSE(
+    ndt_localization::validTransformCandidate(
+      Eigen::Isometry3d::Identity(), pose(2.0), 1.0, 20.0));
+  EXPECT_FALSE(
+    ndt_localization::validTransformCandidate(
+      Eigen::Isometry3d::Identity(), pose(0.0, 30.0), 1.0, 20.0));
+  EXPECT_TRUE(
+    ndt_localization::validTransformCandidate(
+      Eigen::Isometry3d::Identity(), pose(0.5, 10.0), 1.0, 20.0));
 }
 
 TEST(LocalizationStateMachine, RequiresConsecutiveConfirmation)
@@ -394,17 +380,14 @@ TEST(LocalizationStateMachine, RelocalizationRetainsFallbackUntilConfirmed)
 
   const auto pending = machine.observeInitializationCorrection(
     pose(2.1), 0.5, 10.0);
-  EXPECT_EQ(
-    pending.code,
-    ndt_localization::DecisionCode::RELOCALIZATION_CONFIRMATION_PENDING);
+  EXPECT_TRUE(pending.accepted);
+  EXPECT_FALSE(pending.confirmed);
   EXPECT_NEAR(machine.correction().translation().x(), 1.0, 1.0e-9);
 
   const auto confirmed = machine.observeInitializationCorrection(
     pose(2.2), 0.5, 10.0);
+  EXPECT_TRUE(confirmed.accepted);
   EXPECT_TRUE(confirmed.confirmed);
-  EXPECT_EQ(
-    confirmed.code,
-    ndt_localization::DecisionCode::RELOCALIZATION_CONFIRMED);
   EXPECT_EQ(machine.state(), ndt_localization::LocalizationState::TRACKING);
   EXPECT_NEAR(machine.correction().translation().x(), 2.2, 1.0e-9);
 }

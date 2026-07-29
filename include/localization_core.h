@@ -21,67 +21,14 @@ enum class LocalizationState
   RELOCALIZING,
 };
 
-enum class DecisionCode
+enum class OdometryStatus
 {
-  NONE,
-  MAP_UNAVAILABLE,
-  MAP_FRAME_INVALID,
-  MAP_EMPTY,
-  STATE_UNINITIALIZED,
-  STATE_LOST,
-  ODOMETRY_UNAVAILABLE,
-  ODOMETRY_FRAME_INVALID,
-  ODOMETRY_STAMP_INVALID,
-  ODOMETRY_STALE,
-  ODOMETRY_FUTURE,
-  ODOMETRY_POSE_INVALID,
-  ODOMETRY_TOO_OLD,
-  ODOMETRY_TOO_NEW,
-  ODOMETRY_INTERPOLATION_GAP,
-  SCAN_FRAME_INVALID,
-  SCAN_STAMP_INVALID,
-  SCAN_STALE,
-  SCAN_FUTURE,
-  SCAN_PRECEDES_INITIALIZATION,
-  SCAN_EMPTY,
-  SCAN_SUPERSEDED,
-  REGISTRATION_TIMEOUT,
-  RESULT_GENERATION_STALE,
-  LOCAL_MAP_INSUFFICIENT,
-  INITIAL_POSE_FRAME_INVALID,
-  INITIAL_POSE_STAMP_INVALID,
-  INITIAL_POSE_STALE,
-  INITIAL_POSE_FUTURE,
-  INITIAL_POSE_POSE_INVALID,
-  INITIAL_POSE_COVARIANCE_INVALID,
-  INITIAL_POSE_COVARIANCE_AMBIGUOUS,
-  INITIAL_POSE_WAITING_FOR_ODOMETRY,
-  INITIALIZATION_STARTED,
-  INITIALIZATION_SEARCH_PENDING,
-  INITIALIZATION_HYPOTHESIS_SELECTED,
-  INITIALIZATION_SEARCH_FAILED,
-  INITIALIZATION_SEARCH_TIMEOUT,
-  INITIALIZATION_AMBIGUOUS,
-  INITIALIZATION_CONFIRMATION_PENDING,
-  INITIALIZATION_CONFIRMED,
-  RELOCALIZATION_STARTED,
-  RELOCALIZATION_HYPOTHESIS_SELECTED,
-  RELOCALIZATION_CONFIRMATION_PENDING,
-  RELOCALIZATION_CONFIRMED,
-  RELOCALIZATION_SEARCH_FAILED,
-  RELOCALIZATION_SEARCH_TIMEOUT,
-  RELOCALIZATION_AMBIGUOUS,
-  MATCHER_NOT_CONVERGED,
-  RESULT_NON_FINITE,
-  RESULT_NOT_RIGID,
-  RESULT_TRANSLATION_JUMP,
-  RESULT_ROTATION_JUMP,
-  TRACKING_ACCEPTED,
-  TRACKING_LOST,
+  AVAILABLE,
+  UNAVAILABLE,
+  TOO_OLD,
+  TOO_NEW,
+  INTERPOLATION_GAP,
 };
-
-const char * toString(LocalizationState state);
-const char * toString(DecisionCode code);
 
 struct TimedPose
 {
@@ -91,11 +38,8 @@ struct TimedPose
 
 struct OdometryLookup
 {
-  bool success = false;
-  DecisionCode code = DecisionCode::ODOMETRY_UNAVAILABLE;
+  OdometryStatus status = OdometryStatus::UNAVAILABLE;
   Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
-  double before_gap_seconds = 0.0;
-  double after_gap_seconds = 0.0;
 };
 
 class OdometryBuffer
@@ -124,22 +68,13 @@ struct InitialPoseValidationLimits
   double maximum_yaw_stddev_deg = 180.0;
 };
 
-struct ValidationResult
-{
-  bool valid = false;
-  DecisionCode code = DecisionCode::NONE;
-};
-
-ValidationResult validateTimestampNanoseconds(
+bool validTimestampNanoseconds(
   std::int64_t timestamp_ns,
   std::int64_t now_ns,
   double maximum_age_seconds,
-  double future_tolerance_seconds,
-  DecisionCode invalid_code,
-  DecisionCode stale_code,
-  DecisionCode future_code);
+  double future_tolerance_seconds);
 
-ValidationResult validateInitializationScanTimestamp(
+bool initializationScanFollowsPrior(
   std::int64_t scan_timestamp_ns,
   std::int64_t initialization_timestamp_ns);
 
@@ -206,21 +141,13 @@ HypothesisSelection selectBestHypothesis(
   double distinct_translation_m,
   double distinct_rotation_deg);
 
-ValidationResult validateInitialPoseData(
+bool validInitialPoseData(
   const Eigen::Vector3d & position,
   const Eigen::Quaterniond & orientation,
   const std::array<double, 36> & covariance,
   const InitialPoseValidationLimits & limits);
 
-struct TransformValidation
-{
-  bool valid = false;
-  DecisionCode code = DecisionCode::NONE;
-  double translation_delta_m = 0.0;
-  double rotation_delta_deg = 0.0;
-};
-
-TransformValidation validateTransformCandidate(
+bool validTransformCandidate(
   const Eigen::Isometry3d & guess,
   const Eigen::Isometry3d & candidate,
   double maximum_translation_delta_m,
@@ -231,10 +158,7 @@ struct InitializationObservation
 {
   bool accepted = false;
   bool confirmed = false;
-  DecisionCode code = DecisionCode::NONE;
   std::size_t confirmation_count = 0;
-  double translation_delta_m = 0.0;
-  double rotation_delta_deg = 0.0;
 };
 
 class LocalizationStateMachine
@@ -248,7 +172,6 @@ public:
   Eigen::Isometry3d correction() const;
   Eigen::Isometry3d pendingCorrection() const;
   std::size_t confirmationCount() const;
-  std::size_t consecutiveRejections() const;
 
   void beginInitialization(const Eigen::Isometry3d & prior_correction);
   void beginRelocalization(const Eigen::Isometry3d & prior_correction);

@@ -62,140 +62,6 @@ Eigen::Isometry3d interpolatePose(
 namespace ndt_localization
 {
 
-const char * toString(LocalizationState state)
-{
-  switch (state) {
-    case LocalizationState::UNINITIALIZED:
-      return "UNINITIALIZED";
-    case LocalizationState::INITIALIZING:
-      return "INITIALIZING";
-    case LocalizationState::TRACKING:
-      return "TRACKING";
-    case LocalizationState::LOST:
-      return "LOST";
-    case LocalizationState::RELOCALIZING:
-      return "RELOCALIZING";
-  }
-  return "UNKNOWN";
-}
-
-const char * toString(DecisionCode code)
-{
-  switch (code) {
-    case DecisionCode::NONE:
-      return "none";
-    case DecisionCode::MAP_UNAVAILABLE:
-      return "map_unavailable";
-    case DecisionCode::MAP_FRAME_INVALID:
-      return "map_frame_invalid";
-    case DecisionCode::MAP_EMPTY:
-      return "map_empty";
-    case DecisionCode::STATE_UNINITIALIZED:
-      return "state_uninitialized";
-    case DecisionCode::STATE_LOST:
-      return "state_lost";
-    case DecisionCode::ODOMETRY_UNAVAILABLE:
-      return "odometry_unavailable";
-    case DecisionCode::ODOMETRY_FRAME_INVALID:
-      return "odometry_frame_invalid";
-    case DecisionCode::ODOMETRY_STAMP_INVALID:
-      return "odometry_stamp_invalid";
-    case DecisionCode::ODOMETRY_STALE:
-      return "odometry_stale";
-    case DecisionCode::ODOMETRY_FUTURE:
-      return "odometry_future";
-    case DecisionCode::ODOMETRY_POSE_INVALID:
-      return "odometry_pose_invalid";
-    case DecisionCode::ODOMETRY_TOO_OLD:
-      return "odometry_too_old";
-    case DecisionCode::ODOMETRY_TOO_NEW:
-      return "odometry_too_new";
-    case DecisionCode::ODOMETRY_INTERPOLATION_GAP:
-      return "odometry_interpolation_gap";
-    case DecisionCode::SCAN_FRAME_INVALID:
-      return "scan_frame_invalid";
-    case DecisionCode::SCAN_STAMP_INVALID:
-      return "scan_stamp_invalid";
-    case DecisionCode::SCAN_STALE:
-      return "scan_stale";
-    case DecisionCode::SCAN_FUTURE:
-      return "scan_future";
-    case DecisionCode::SCAN_PRECEDES_INITIALIZATION:
-      return "scan_precedes_initialization";
-    case DecisionCode::SCAN_EMPTY:
-      return "scan_empty";
-    case DecisionCode::SCAN_SUPERSEDED:
-      return "scan_superseded";
-    case DecisionCode::REGISTRATION_TIMEOUT:
-      return "registration_timeout";
-    case DecisionCode::RESULT_GENERATION_STALE:
-      return "result_generation_stale";
-    case DecisionCode::LOCAL_MAP_INSUFFICIENT:
-      return "local_map_insufficient";
-    case DecisionCode::INITIAL_POSE_FRAME_INVALID:
-      return "initial_pose_frame_invalid";
-    case DecisionCode::INITIAL_POSE_STAMP_INVALID:
-      return "initial_pose_stamp_invalid";
-    case DecisionCode::INITIAL_POSE_STALE:
-      return "initial_pose_stale";
-    case DecisionCode::INITIAL_POSE_FUTURE:
-      return "initial_pose_future";
-    case DecisionCode::INITIAL_POSE_POSE_INVALID:
-      return "initial_pose_pose_invalid";
-    case DecisionCode::INITIAL_POSE_COVARIANCE_INVALID:
-      return "initial_pose_covariance_invalid";
-    case DecisionCode::INITIAL_POSE_COVARIANCE_AMBIGUOUS:
-      return "initial_pose_covariance_ambiguous";
-    case DecisionCode::INITIAL_POSE_WAITING_FOR_ODOMETRY:
-      return "initial_pose_waiting_for_odometry";
-    case DecisionCode::INITIALIZATION_STARTED:
-      return "initialization_started";
-    case DecisionCode::INITIALIZATION_SEARCH_PENDING:
-      return "initialization_search_pending";
-    case DecisionCode::INITIALIZATION_HYPOTHESIS_SELECTED:
-      return "initialization_hypothesis_selected";
-    case DecisionCode::INITIALIZATION_SEARCH_FAILED:
-      return "initialization_search_failed";
-    case DecisionCode::INITIALIZATION_SEARCH_TIMEOUT:
-      return "initialization_search_timeout";
-    case DecisionCode::INITIALIZATION_AMBIGUOUS:
-      return "initialization_ambiguous";
-    case DecisionCode::INITIALIZATION_CONFIRMATION_PENDING:
-      return "initialization_confirmation_pending";
-    case DecisionCode::INITIALIZATION_CONFIRMED:
-      return "initialization_confirmed";
-    case DecisionCode::RELOCALIZATION_STARTED:
-      return "relocalization_started";
-    case DecisionCode::RELOCALIZATION_HYPOTHESIS_SELECTED:
-      return "relocalization_hypothesis_selected";
-    case DecisionCode::RELOCALIZATION_CONFIRMATION_PENDING:
-      return "relocalization_confirmation_pending";
-    case DecisionCode::RELOCALIZATION_CONFIRMED:
-      return "relocalization_confirmed";
-    case DecisionCode::RELOCALIZATION_SEARCH_FAILED:
-      return "relocalization_search_failed";
-    case DecisionCode::RELOCALIZATION_SEARCH_TIMEOUT:
-      return "relocalization_search_timeout";
-    case DecisionCode::RELOCALIZATION_AMBIGUOUS:
-      return "relocalization_ambiguous";
-    case DecisionCode::MATCHER_NOT_CONVERGED:
-      return "matcher_not_converged";
-    case DecisionCode::RESULT_NON_FINITE:
-      return "result_non_finite";
-    case DecisionCode::RESULT_NOT_RIGID:
-      return "result_not_rigid";
-    case DecisionCode::RESULT_TRANSLATION_JUMP:
-      return "result_translation_jump";
-    case DecisionCode::RESULT_ROTATION_JUMP:
-      return "result_rotation_jump";
-    case DecisionCode::TRACKING_ACCEPTED:
-      return "tracking_accepted";
-    case DecisionCode::TRACKING_LOST:
-      return "tracking_lost";
-  }
-  return "unknown";
-}
-
 OdometryBuffer::OdometryBuffer(
   double duration_seconds,
   std::size_t maximum_samples)
@@ -243,11 +109,11 @@ OdometryLookup OdometryBuffer::lookup(
     return result;
   }
   if (timestamp_ns < samples_.front().timestamp_ns) {
-    result.code = DecisionCode::ODOMETRY_TOO_OLD;
+    result.status = OdometryStatus::TOO_OLD;
     return result;
   }
   if (timestamp_ns > samples_.back().timestamp_ns) {
-    result.code = DecisionCode::ODOMETRY_TOO_NEW;
+    result.status = OdometryStatus::TOO_NEW;
     return result;
   }
 
@@ -257,31 +123,29 @@ OdometryLookup OdometryBuffer::lookup(
       return sample.timestamp_ns < timestamp;
     });
   if (after != samples_.end() && after->timestamp_ns == timestamp_ns) {
-    result.success = true;
-    result.code = DecisionCode::NONE;
+    result.status = OdometryStatus::AVAILABLE;
     result.pose = after->pose;
     return result;
   }
   if (after == samples_.begin() || after == samples_.end()) {
-    result.code = DecisionCode::ODOMETRY_INTERPOLATION_GAP;
+    result.status = OdometryStatus::INTERPOLATION_GAP;
     return result;
   }
 
   const auto before = std::prev(after);
-  result.before_gap_seconds =
+  const double before_gap_seconds =
     static_cast<double>(timestamp_ns - before->timestamp_ns) /
     kNanosecondsPerSecond;
-  result.after_gap_seconds =
+  const double after_gap_seconds =
     static_cast<double>(after->timestamp_ns - timestamp_ns) /
     kNanosecondsPerSecond;
-  if (result.before_gap_seconds > maximum_interpolation_gap_seconds ||
-    result.after_gap_seconds > maximum_interpolation_gap_seconds)
+  if (before_gap_seconds > maximum_interpolation_gap_seconds ||
+    after_gap_seconds > maximum_interpolation_gap_seconds)
   {
-    result.code = DecisionCode::ODOMETRY_INTERPOLATION_GAP;
+    result.status = OdometryStatus::INTERPOLATION_GAP;
     return result;
   }
-  result.success = true;
-  result.code = DecisionCode::NONE;
+  result.status = OdometryStatus::AVAILABLE;
   result.pose = interpolatePose(*before, *after, timestamp_ns);
   return result;
 }
@@ -291,54 +155,36 @@ std::size_t OdometryBuffer::size() const
   return samples_.size();
 }
 
-ValidationResult validateTimestampNanoseconds(
+bool validTimestampNanoseconds(
   std::int64_t timestamp_ns,
   std::int64_t now_ns,
   double maximum_age_seconds,
-  double future_tolerance_seconds,
-  DecisionCode invalid_code,
-  DecisionCode stale_code,
-  DecisionCode future_code)
+  double future_tolerance_seconds)
 {
-  ValidationResult result;
   if (timestamp_ns <= 0 || now_ns <= 0) {
-    result.code = invalid_code;
-    return result;
+    return false;
   }
   const double age_seconds =
     static_cast<double>(now_ns - timestamp_ns) /
     kNanosecondsPerSecond;
   if (!std::isfinite(age_seconds)) {
-    result.code = invalid_code;
-    return result;
+    return false;
   }
   if (age_seconds > maximum_age_seconds) {
-    result.code = stale_code;
-    return result;
+    return false;
   }
   if (age_seconds < -future_tolerance_seconds) {
-    result.code = future_code;
-    return result;
+    return false;
   }
-  result.valid = true;
-  result.code = DecisionCode::NONE;
-  return result;
+  return true;
 }
 
-ValidationResult validateInitializationScanTimestamp(
+bool initializationScanFollowsPrior(
   std::int64_t scan_timestamp_ns,
   std::int64_t initialization_timestamp_ns)
 {
-  ValidationResult result;
-  if (initialization_timestamp_ns <= 0 ||
-    scan_timestamp_ns <= initialization_timestamp_ns)
-  {
-    result.code = DecisionCode::SCAN_PRECEDES_INITIALIZATION;
-    return result;
-  }
-  result.valid = true;
-  result.code = DecisionCode::NONE;
-  return result;
+  return initialization_timestamp_ns > 0 &&
+         scan_timestamp_ns > initialization_timestamp_ns;
 }
 
 bool deadlineExpired(
@@ -573,24 +419,21 @@ HypothesisSelection selectBestHypothesis(
   return selection;
 }
 
-ValidationResult validateInitialPoseData(
+bool validInitialPoseData(
   const Eigen::Vector3d & position,
   const Eigen::Quaterniond & orientation,
   const std::array<double, 36> & covariance,
   const InitialPoseValidationLimits & limits)
 {
-  ValidationResult result;
   if (!position.allFinite() || !orientation.coeffs().allFinite()) {
-    result.code = DecisionCode::INITIAL_POSE_POSE_INVALID;
-    return result;
+    return false;
   }
   const double quaternion_norm = orientation.norm();
   if (!std::isfinite(quaternion_norm) ||
     quaternion_norm <= std::numeric_limits<double>::epsilon() ||
     std::abs(quaternion_norm - 1.0) > limits.quaternion_norm_tolerance)
   {
-    result.code = DecisionCode::INITIAL_POSE_POSE_INVALID;
-    return result;
+    return false;
   }
 
   Eigen::Matrix<double, 6, 6> covariance_matrix;
@@ -598,8 +441,7 @@ ValidationResult validateInitialPoseData(
     for (std::size_t column = 0; column < 6; ++column) {
       const double value = covariance[row * 6 + column];
       if (!std::isfinite(value)) {
-        result.code = DecisionCode::INITIAL_POSE_COVARIANCE_INVALID;
-        return result;
+        return false;
       }
       covariance_matrix(row, column) = value;
     }
@@ -607,13 +449,11 @@ ValidationResult validateInitialPoseData(
   if ((covariance_matrix - covariance_matrix.transpose()).cwiseAbs().maxCoeff() >
     limits.covariance_symmetry_tolerance)
   {
-    result.code = DecisionCode::INITIAL_POSE_COVARIANCE_INVALID;
-    return result;
+    return false;
   }
   for (std::size_t index = 0; index < 6; ++index) {
     if (covariance_matrix(index, index) < -limits.covariance_psd_tolerance) {
-      result.code = DecisionCode::INITIAL_POSE_COVARIANCE_INVALID;
-      return result;
+      return false;
     }
   }
   const Eigen::Matrix<double, 6, 6> symmetric_covariance =
@@ -623,8 +463,7 @@ ValidationResult validateInitialPoseData(
   if (solver.info() != Eigen::Success ||
     solver.eigenvalues().minCoeff() < -limits.covariance_psd_tolerance)
   {
-    result.code = DecisionCode::INITIAL_POSE_COVARIANCE_INVALID;
-    return result;
+    return false;
   }
 
   const double maximum_position_variance =
@@ -638,48 +477,38 @@ ValidationResult validateInitialPoseData(
     covariance_matrix(2, 2) > maximum_position_variance ||
     covariance_matrix(5, 5) > maximum_yaw_variance)
   {
-    result.code = DecisionCode::INITIAL_POSE_COVARIANCE_AMBIGUOUS;
-    return result;
+    return false;
   }
 
-  result.valid = true;
-  result.code = DecisionCode::NONE;
-  return result;
+  return true;
 }
 
-TransformValidation validateTransformCandidate(
+bool validTransformCandidate(
   const Eigen::Isometry3d & guess,
   const Eigen::Isometry3d & candidate,
   double maximum_translation_delta_m,
   double maximum_rotation_delta_deg,
   double rigidity_tolerance)
 {
-  TransformValidation result;
   if (!finiteTransform(candidate)) {
-    result.code = DecisionCode::RESULT_NON_FINITE;
-    return result;
+    return false;
   }
   if (!rigidTransform(candidate, rigidity_tolerance)) {
-    result.code = DecisionCode::RESULT_NOT_RIGID;
-    return result;
+    return false;
   }
 
   const Eigen::Isometry3d delta = guess.inverse() * candidate;
-  result.translation_delta_m = delta.translation().norm();
+  const double translation_delta_m = delta.translation().norm();
   const Eigen::AngleAxisd rotation_delta(delta.rotation());
-  result.rotation_delta_deg =
+  const double rotation_delta_deg =
     std::abs(rotation_delta.angle()) * 180.0 / kPi;
-  if (result.translation_delta_m > maximum_translation_delta_m) {
-    result.code = DecisionCode::RESULT_TRANSLATION_JUMP;
-    return result;
+  if (translation_delta_m > maximum_translation_delta_m) {
+    return false;
   }
-  if (result.rotation_delta_deg > maximum_rotation_delta_deg) {
-    result.code = DecisionCode::RESULT_ROTATION_JUMP;
-    return result;
+  if (rotation_delta_deg > maximum_rotation_delta_deg) {
+    return false;
   }
-  result.valid = true;
-  result.code = DecisionCode::NONE;
-  return result;
+  return true;
 }
 
 LocalizationStateMachine::LocalizationStateMachine(
@@ -730,12 +559,6 @@ std::size_t LocalizationStateMachine::confirmationCount() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return confirmation_count_;
-}
-
-std::size_t LocalizationStateMachine::consecutiveRejections() const
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  return consecutive_rejections_;
 }
 
 void LocalizationStateMachine::beginInitialization(
@@ -811,21 +634,17 @@ LocalizationStateMachine::observeInitializationCorrection(
 {
   std::lock_guard<std::mutex> lock(mutex_);
   InitializationObservation observation;
-  const bool relocalizing =
-    state_ == LocalizationState::RELOCALIZING;
-  if (state_ != LocalizationState::INITIALIZING && !relocalizing) {
-    observation.code = DecisionCode::STATE_UNINITIALIZED;
+  if (state_ != LocalizationState::INITIALIZING &&
+    state_ != LocalizationState::RELOCALIZING)
+  {
     return observation;
   }
-  const TransformValidation validation = validateTransformCandidate(
-    pending_correction_, candidate_correction,
-    maximum_translation_delta_m, maximum_rotation_delta_deg);
-  observation.translation_delta_m = validation.translation_delta_m;
-  observation.rotation_delta_deg = validation.rotation_delta_deg;
-  if (!validation.valid) {
+  if (!validTransformCandidate(
+      pending_correction_, candidate_correction,
+      maximum_translation_delta_m, maximum_rotation_delta_deg))
+  {
     pending_correction_ = initial_prior_correction_;
     confirmation_count_ = 0;
-    observation.code = validation.code;
     return observation;
   }
 
@@ -834,9 +653,6 @@ LocalizationStateMachine::observeInitializationCorrection(
   observation.accepted = true;
   observation.confirmation_count = confirmation_count_;
   if (confirmation_count_ < required_confirmations_) {
-    observation.code = relocalizing ?
-      DecisionCode::RELOCALIZATION_CONFIRMATION_PENDING :
-      DecisionCode::INITIALIZATION_CONFIRMATION_PENDING;
     return observation;
   }
 
@@ -846,9 +662,6 @@ LocalizationStateMachine::observeInitializationCorrection(
   confirmation_count_ = required_confirmations_;
   consecutive_rejections_ = 0;
   observation.confirmed = true;
-  observation.code = relocalizing ?
-    DecisionCode::RELOCALIZATION_CONFIRMED :
-    DecisionCode::INITIALIZATION_CONFIRMED;
   return observation;
 }
 

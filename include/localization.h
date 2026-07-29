@@ -5,15 +5,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <condition_variable>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
 
 #include "builtin_interfaces/msg/time.hpp"
-#include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "localization_core.h"
 #include "nav_msgs/msg/odometry.hpp"
@@ -36,30 +33,11 @@ public:
   ~LocalizationNode();
 
 private:
-  struct ScanMetrics
+  enum class RegistrationInputStatus
   {
-    ndt_localization::DecisionCode decision =
-      ndt_localization::DecisionCode::NONE;
-    bool accepted = false;
-    bool converged = false;
-    double conversion_ms = 0.0;
-    double local_map_ms = 0.0;
-    double matcher_ms = 0.0;
-    double validation_ms = 0.0;
-    double total_ms = 0.0;
-    double queue_wait_ms = 0.0;
-    double input_age_ms = 0.0;
-    double odometry_before_gap_ms = 0.0;
-    double odometry_after_gap_ms = 0.0;
-    double translation_delta_m = std::numeric_limits<double>::quiet_NaN();
-    double rotation_delta_deg = std::numeric_limits<double>::quiet_NaN();
-    std::size_t raw_scan_points = 0;
-    std::size_t filtered_scan_points = 0;
-    std::size_t capped_scan_points = 0;
-    std::size_t target_points = 0;
-    std::uint64_t generation = 0;
-    bool deadline_exceeded = false;
-    int iterations = 0;
+    READY,
+    INVALID_SCAN,
+    REGISTRATION_REJECTED,
   };
 
   struct ScanTask
@@ -67,13 +45,10 @@ private:
     sensor_msgs::msg::PointCloud2::ConstSharedPtr message;
     std::uint64_t generation = 0;
     std::chrono::steady_clock::time_point received_at;
-    std::chrono::steady_clock::time_point started_at;
     std::chrono::steady_clock::time_point deadline;
     bool waiting_for_odometry = false;
     std::uint64_t required_odometry_sequence = 0;
     bool decided = false;
-    ndt_localization::DecisionCode decision =
-      ndt_localization::DecisionCode::NONE;
   };
 
   struct RegistrationInput
@@ -87,34 +62,9 @@ private:
   {
     sensor_msgs::msg::PointCloud2::ConstSharedPtr message;
     std::uint64_t generation = 0;
-    std::chrono::steady_clock::time_point received_at;
     std::chrono::steady_clock::time_point search_deadline;
     ndt_localization::InitializationSearchBounds bounds;
     bool recovery = false;
-  };
-
-  struct InitializationMetrics
-  {
-    ndt_localization::DecisionCode decision =
-      ndt_localization::DecisionCode::NONE;
-    std::uint64_t generation = 0;
-    bool recovery = false;
-    bool success = false;
-    bool ambiguous = false;
-    std::size_t hypotheses = 0;
-    std::size_t evaluated = 0;
-    std::size_t converged = 0;
-    std::size_t refined = 0;
-    std::size_t scan_points = 0;
-    std::size_t target_points = 0;
-    double best_score = std::numeric_limits<double>::infinity();
-    double second_score = std::numeric_limits<double>::infinity();
-    double score_margin = std::numeric_limits<double>::infinity();
-    double coarse_ms = 0.0;
-    double refinement_ms = 0.0;
-    double total_ms = 0.0;
-    double translation_span_m = 0.0;
-    double yaw_span_deg = 0.0;
   };
 
   void mapCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
@@ -123,34 +73,14 @@ private:
   void initialPoseCallback(
     const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg);
 
-  ndt_localization::DecisionCode validateTimestamp(
+  bool validTimestamp(
     const builtin_interfaces::msg::Time & stamp,
-    double maximum_age_seconds,
-    ndt_localization::DecisionCode invalid_code,
-    ndt_localization::DecisionCode stale_code,
-    ndt_localization::DecisionCode future_code,
-    double * age_ms) const;
+    double maximum_age_seconds) const;
   void publishMapPrediction(
     const nav_msgs::msg::Odometry & odometry,
     const Eigen::Isometry3d & odom_to_base,
     const Eigen::Isometry3d & map_to_odom);
-  void publishScanDiagnostic(
-    const builtin_interfaces::msg::Time & stamp,
-    const ScanMetrics & metrics);
-  void publishStateDiagnostic(
-    const builtin_interfaces::msg::Time & stamp,
-    ndt_localization::DecisionCode code);
-  void publishInitializationDiagnostic(
-    const builtin_interfaces::msg::Time & stamp,
-    const InitializationMetrics & metrics);
-  void publishLateResultDiagnostic(
-    const ScanTask & task,
-    double matcher_ms,
-    double completion_ms);
-  void publishImmediateScanRejection(
-    const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
-    ScanMetrics metrics,
-    ndt_localization::DecisionCode code);
+  void rejectScan();
   void enqueueScan(
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
     const std::chrono::steady_clock::time_point & received_at);
@@ -158,39 +88,25 @@ private:
   void initializationWorkerLoop();
   void deadlineWorkerLoop();
   void processScanTask(const std::shared_ptr<ScanTask> & task);
-  ndt_localization::DecisionCode prepareRegistrationInput(
+  RegistrationInputStatus prepareRegistrationInput(
     const std::shared_ptr<ScanTask> & task,
     const Eigen::Isometry3d & correction_guess,
     const ndt_localization::OdometryLookup & synchronized_odometry,
-    ScanMetrics * metrics,
     RegistrationInput * input);
   bool runRegistration(
     const RegistrationInput & input,
-    ScanMetrics * metrics,
     Eigen::Isometry3d * optimized_pose);
   void commitRegistrationResult(
     const std::shared_ptr<ScanTask> & task,
-    const Eigen::Isometry3d & candidate_correction,
-    const std::chrono::steady_clock::time_point & validation_start,
-    ScanMetrics metrics);
-  void publishLateTimeoutResult(
-    const std::shared_ptr<ScanTask> & task,
-    const ScanMetrics & metrics,
-    bool rejection_published);
+    const Eigen::Isometry3d & candidate_correction);
   void processInitializationTask(
     const std::shared_ptr<InitializationTask> & task);
   void enqueueInitializationScan(
-    const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
-    const std::chrono::steady_clock::time_point & received_at);
-  bool finalizeRejectedTask(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg);
+  void finalizeRejectedTask(
     const std::shared_ptr<ScanTask> & task,
-    ScanMetrics metrics,
-    ndt_localization::DecisionCode code,
     bool registration_rejection);
-  void publishSupersededTasks(
-    const std::vector<std::shared_ptr<ScanTask>> & tasks);
-  std::vector<std::shared_ptr<ScanTask>>
-  invalidateRegistrationWorkLocked();
+  void invalidateRegistrationWorkLocked();
   bool applyRejectionStateLocked(bool registration_rejection);
   void beginInitialization(
     const builtin_interfaces::msg::Time & stamp,
@@ -213,8 +129,6 @@ private:
     initial_pose_sub_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_;
-  rclcpp::Publisher<
-    diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostic_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr
     relocalization_service_;
   rclcpp::CallbackGroup::SharedPtr odometry_callback_group_;
