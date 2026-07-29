@@ -387,7 +387,7 @@ Exit criterion:
 - false acceptance remains zero on the test suite;
 - initialization failure is explicit and bounded.
 
-### Phase 4: Production configuration minimization
+### Phase 4: Production parameter-interface minimization
 
 The planned local-matcher comparison is deliberately skipped. Hardened PCL
 NDT already meets the development-set accuracy and latency requirements, and
@@ -396,21 +396,25 @@ validation.
 
 Implement:
 
-- classify localization parameters as validated defaults or deployment
-  overrides;
-- remove default-valued localization overrides from the combined
-  `spot_navigation` configuration;
-- retain the explicit package-local localization profile for benchmarking,
-  tuning, and auditability;
-- verify that the minimal deployment configuration resolves to the same
-  effective values as the Phase 3 profile;
-- replay the minimal configuration and compare accuracy, initialization, and
+- classify localization settings as deployment choices or internal algorithm
+  mechanics;
+- reduce the node's public ROS interface from 58 localization parameters to
+  the 17 workload, environment-scale, and safety-policy choices operators may
+  reasonably tune;
+- preserve the other 41 validated Phase 3 values as named compiled defaults;
+- keep localization tuning solely in the package-local configuration and
+  shared frame/integration settings solely in the combined `spot_navigation`
+  configuration;
+- compose both files in the production launch and inspect the live parameter
+  surface;
+- replay the reduced interface and compare accuracy, initialization, and
   deadline behavior against Phase 3.
 
 Exit criterion:
 
-- the active deployment file contains no redundant localization overrides;
-- effective localization parameters remain identical to the Phase 3 profile;
+- the live localization interface contains exactly the intended 17 parameters;
+- the combined deployment file contains no localization algorithm tuning;
+- removed mechanics retain the validated Phase 3 behavior internally;
 - measured performance does not regress.
 
 ### Phase 5: Held-out validation

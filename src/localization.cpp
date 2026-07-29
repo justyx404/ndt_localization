@@ -17,6 +17,35 @@ namespace
 
 constexpr double kPi = 3.14159265358979323846;
 
+// Validated tracking matcher and deadline mechanics.
+constexpr double kNdtStepSizeM = 0.1;
+constexpr double kNdtTransformationEpsilon = 0.005;
+constexpr int kNdtMaximumIterations = 15;
+constexpr double kNdtScanLeafSizeM = 0.0;
+constexpr std::size_t kMinimumLocalMapPoints = 1000;
+constexpr double kDeadlineWatchdogMarginMs = 1.0;
+
+// Input synchronization and numerical validation policy.
+constexpr double kOdometryBufferDurationSeconds = 3.0;
+constexpr std::size_t kOdometryBufferMaximumSamples = 500;
+constexpr double kMaximumOdometryInterpolationGapSeconds = 0.15;
+constexpr double kMaximumOdometryAgeSeconds = 0.5;
+constexpr double kMaximumScanAgeSeconds = 0.5;
+constexpr double kMaximumInitialPoseAgeSeconds = 1.0;
+constexpr double kFutureToleranceSeconds = 0.1;
+constexpr double kQuaternionNormTolerance = 1.0e-3;
+constexpr double kCovarianceSymmetryTolerance = 1.0e-6;
+constexpr double kCovariancePsdTolerance = 1.0e-9;
+
+// Initialization confirmation, search-envelope, and retry mechanics.
+constexpr double kMaximumConfirmationTranslationDeltaM = 0.5;
+constexpr double kMaximumConfirmationRotationDeltaDeg = 10.0;
+constexpr double kInitializationConfirmationReserveMs = 350.0;
+constexpr double kInitializationStandardDeviationMultiplier = 2.5;
+constexpr double kInitializationMinimumTranslationSpanM = 1.0;
+constexpr double kInitializationMinimumYawSpanDeg = 15.0;
+constexpr double kRelocalizationRetryDelayMs = 500.0;
+
 diagnostic_msgs::msg::KeyValue keyValue(
   const std::string & key,
   const std::string & value)
@@ -107,114 +136,38 @@ LocalizationNode::LocalizationNode()
   this->declare_parameter<std::string>("base_frame_id", "base_link");
   this->declare_parameter<std::string>("map_frame_id", "map");
 
+  // Public deployment interface. Optimizer mechanics, numerical tolerances,
+  // and queue policy are validated implementation constants above.
   this->declare_parameter<double>("localization.ndt_resolution", 1.0);
-  this->declare_parameter<double>("localization.ndt_step_size", 0.1);
-  this->declare_parameter<double>("localization.ndt_trans_epsilon", 0.005);
-  this->declare_parameter<int>("localization.ndt_max_iter", 15);
   this->declare_parameter<double>("localization.ndt_map_leaf_size", 0.15);
-  this->declare_parameter<double>("localization.ndt_scan_leaf_size", 0.0);
   this->declare_parameter<double>("localization.local_map_radius_m", 35.0);
   this->declare_parameter<int>(
     "localization.max_local_map_points", 120000);
-  this->declare_parameter<int>(
-    "localization.min_local_map_points", 1000);
   this->declare_parameter<int>("localization.max_scan_points", 4000);
   this->declare_parameter<double>(
     "localization.registration_deadline_ms", 80.0);
   this->declare_parameter<double>(
-    "localization.deadline_watchdog_margin_ms", 1.0);
-  this->declare_parameter<bool>("localization.ndt_log_runtime", false);
-  this->declare_parameter<bool>(
-    "localization.ndt_compute_fitness_score", false);
-  this->declare_parameter<bool>(
-    "localization.publish_scan_diagnostics", true);
-
-  this->declare_parameter<double>(
-    "localization.odom_buffer_duration_seconds", 3.0);
-  this->declare_parameter<int>(
-    "localization.odom_buffer_max_samples", 500);
-  this->declare_parameter<double>(
-    "localization.max_odom_interpolation_gap_seconds", 0.15);
-  this->declare_parameter<double>(
-    "localization.max_odometry_age_seconds", 0.5);
-  this->declare_parameter<double>(
-    "localization.max_scan_age_seconds", 0.5);
-  this->declare_parameter<double>(
-    "localization.max_initial_pose_age_seconds", 1.0);
-  this->declare_parameter<double>(
-    "localization.future_tolerance_seconds", 0.1);
-  this->declare_parameter<double>(
-    "localization.quaternion_norm_tolerance", 1.0e-3);
-  this->declare_parameter<double>(
-    "localization.covariance_symmetry_tolerance", 1.0e-6);
-  this->declare_parameter<double>(
-    "localization.covariance_psd_tolerance", 1.0e-9);
-  this->declare_parameter<double>(
-    "localization.max_initial_position_stddev_m", 10.0);
-  this->declare_parameter<double>(
-    "localization.max_initial_yaw_stddev_deg", 180.0);
-  this->declare_parameter<int>(
-    "localization.initialization_confirmation_scans", 3);
-  this->declare_parameter<double>(
     "localization.max_result_translation_delta_m", 1.0);
   this->declare_parameter<double>(
     "localization.max_result_rotation_delta_deg", 20.0);
-  this->declare_parameter<double>(
-    "localization.max_confirmation_translation_delta_m", 0.5);
-  this->declare_parameter<double>(
-    "localization.max_confirmation_rotation_delta_deg", 10.0);
   this->declare_parameter<int>(
     "localization.max_consecutive_rejections", 10);
   this->declare_parameter<double>(
     "localization.initialization_timeout_ms", 2000.0);
   this->declare_parameter<double>(
-    "localization.initialization_confirmation_reserve_ms", 350.0);
-  this->declare_parameter<double>(
-    "localization.initialization_stddev_multiplier", 2.5);
-  this->declare_parameter<double>(
-    "localization.initialization_min_translation_span_m", 1.0);
-  this->declare_parameter<double>(
     "localization.initialization_max_translation_span_m", 10.0);
   this->declare_parameter<double>(
-    "localization.initialization_min_yaw_span_deg", 15.0);
-  this->declare_parameter<double>(
     "localization.initialization_max_yaw_span_deg", 180.0);
-  this->declare_parameter<double>(
-    "localization.recovery_translation_span_m", 5.0);
-  this->declare_parameter<double>(
-    "localization.recovery_yaw_span_deg", 90.0);
-  this->declare_parameter<double>(
-    "localization.relocalization_retry_delay_ms", 500.0);
   this->declare_parameter<int>(
-    "localization.initialization_max_hypotheses", 65);
-  this->declare_parameter<double>(
-    "localization.initialization_coarse_map_leaf_size_m", 0.5);
-  this->declare_parameter<double>(
-    "localization.initialization_coarse_scan_leaf_size_m", 0.4);
-  this->declare_parameter<int>(
-    "localization.initialization_max_coarse_scan_points", 2000);
-  this->declare_parameter<double>(
-    "localization.initialization_coarse_resolution_m", 2.0);
-  this->declare_parameter<double>(
-    "localization.initialization_coarse_step_size_m", 0.2);
-  this->declare_parameter<double>(
-    "localization.initialization_coarse_trans_epsilon", 0.05);
-  this->declare_parameter<int>(
-    "localization.initialization_coarse_max_iter", 8);
-  this->declare_parameter<int>(
-    "localization.initialization_refinement_candidates", 3);
-  this->declare_parameter<double>(
-    "localization.initialization_refinement_reserve_ms", 250.0);
-  this->declare_parameter<double>(
-    "localization.initialization_fitness_max_range_m", 2.0);
+    "localization.initialization_confirmation_scans", 3);
   this->declare_parameter<double>(
     "localization.initialization_max_fitness_score", 0.5);
   this->declare_parameter<double>(
     "localization.initialization_min_score_margin", 0.01);
   this->declare_parameter<double>(
-    "localization.initialization_distinct_translation_m", 0.5);
+    "localization.recovery_translation_span_m", 5.0);
   this->declare_parameter<double>(
-    "localization.initialization_distinct_rotation_deg", 5.0);
+    "localization.recovery_yaw_span_deg", 90.0);
 
   this->get_parameter("odom_frame_id", this->odom_frame_id_);
   this->get_parameter("base_frame_id", this->base_frame_id_);
@@ -222,78 +175,17 @@ LocalizationNode::LocalizationNode()
   this->get_parameter(
     "localization.ndt_resolution", this->ndt_resolution_);
   this->get_parameter(
-    "localization.ndt_step_size", this->ndt_step_size_);
-  this->get_parameter(
-    "localization.ndt_trans_epsilon", this->ndt_trans_epsilon_);
-  this->get_parameter(
-    "localization.ndt_max_iter", this->ndt_max_iter_);
-  this->get_parameter(
     "localization.ndt_map_leaf_size", this->ndt_map_leaf_size_);
-  this->get_parameter(
-    "localization.ndt_scan_leaf_size", this->ndt_scan_leaf_size_);
   this->get_parameter(
     "localization.local_map_radius_m", this->local_map_radius_m_);
   this->get_parameter(
     "localization.max_local_map_points",
     this->maximum_local_map_points_);
   this->get_parameter(
-    "localization.min_local_map_points",
-    this->minimum_local_map_points_);
-  this->get_parameter(
     "localization.max_scan_points", this->maximum_scan_points_);
   this->get_parameter(
     "localization.registration_deadline_ms",
     this->registration_deadline_ms_);
-  this->get_parameter(
-    "localization.deadline_watchdog_margin_ms",
-    this->deadline_watchdog_margin_ms_);
-  this->get_parameter(
-    "localization.ndt_log_runtime", this->ndt_log_runtime_);
-  this->get_parameter(
-    "localization.ndt_compute_fitness_score",
-    this->ndt_compute_fitness_score_);
-  this->get_parameter(
-    "localization.publish_scan_diagnostics",
-    this->publish_scan_diagnostics_);
-  this->get_parameter(
-    "localization.odom_buffer_duration_seconds",
-    this->odometry_buffer_duration_seconds_);
-  this->get_parameter(
-    "localization.odom_buffer_max_samples",
-    this->odometry_buffer_max_samples_);
-  this->get_parameter(
-    "localization.max_odom_interpolation_gap_seconds",
-    this->maximum_odometry_interpolation_gap_seconds_);
-  this->get_parameter(
-    "localization.max_odometry_age_seconds",
-    this->maximum_odometry_age_seconds_);
-  this->get_parameter(
-    "localization.max_scan_age_seconds",
-    this->maximum_scan_age_seconds_);
-  this->get_parameter(
-    "localization.max_initial_pose_age_seconds",
-    this->maximum_initial_pose_age_seconds_);
-  this->get_parameter(
-    "localization.future_tolerance_seconds",
-    this->future_tolerance_seconds_);
-  this->get_parameter(
-    "localization.quaternion_norm_tolerance",
-    this->quaternion_norm_tolerance_);
-  this->get_parameter(
-    "localization.covariance_symmetry_tolerance",
-    this->covariance_symmetry_tolerance_);
-  this->get_parameter(
-    "localization.covariance_psd_tolerance",
-    this->covariance_psd_tolerance_);
-  this->get_parameter(
-    "localization.max_initial_position_stddev_m",
-    this->maximum_initial_position_stddev_m_);
-  this->get_parameter(
-    "localization.max_initial_yaw_stddev_deg",
-    this->maximum_initial_yaw_stddev_deg_);
-  this->get_parameter(
-    "localization.initialization_confirmation_scans",
-    this->initialization_confirmation_scans_);
   this->get_parameter(
     "localization.max_result_translation_delta_m",
     this->maximum_result_translation_delta_m_);
@@ -301,77 +193,20 @@ LocalizationNode::LocalizationNode()
     "localization.max_result_rotation_delta_deg",
     this->maximum_result_rotation_delta_deg_);
   this->get_parameter(
-    "localization.max_confirmation_translation_delta_m",
-    this->maximum_confirmation_translation_delta_m_);
-  this->get_parameter(
-    "localization.max_confirmation_rotation_delta_deg",
-    this->maximum_confirmation_rotation_delta_deg_);
-  this->get_parameter(
     "localization.max_consecutive_rejections",
     this->maximum_consecutive_rejections_);
   this->get_parameter(
     "localization.initialization_timeout_ms",
     this->initialization_timeout_ms_);
   this->get_parameter(
-    "localization.initialization_confirmation_reserve_ms",
-    this->initialization_confirmation_reserve_ms_);
-  this->get_parameter(
-    "localization.initialization_stddev_multiplier",
-    this->initialization_stddev_multiplier_);
-  this->get_parameter(
-    "localization.initialization_min_translation_span_m",
-    this->initialization_minimum_translation_span_m_);
-  this->get_parameter(
     "localization.initialization_max_translation_span_m",
     this->initialization_maximum_translation_span_m_);
-  this->get_parameter(
-    "localization.initialization_min_yaw_span_deg",
-    this->initialization_minimum_yaw_span_deg_);
   this->get_parameter(
     "localization.initialization_max_yaw_span_deg",
     this->initialization_maximum_yaw_span_deg_);
   this->get_parameter(
-    "localization.recovery_translation_span_m",
-    this->recovery_translation_span_m_);
-  this->get_parameter(
-    "localization.recovery_yaw_span_deg",
-    this->recovery_yaw_span_deg_);
-  this->get_parameter(
-    "localization.relocalization_retry_delay_ms",
-    this->relocalization_retry_delay_ms_);
-  this->get_parameter(
-    "localization.initialization_max_hypotheses",
-    this->initialization_maximum_hypotheses_);
-  this->get_parameter(
-    "localization.initialization_coarse_map_leaf_size_m",
-    this->initialization_coarse_map_leaf_size_m_);
-  this->get_parameter(
-    "localization.initialization_coarse_scan_leaf_size_m",
-    this->initialization_coarse_scan_leaf_size_m_);
-  this->get_parameter(
-    "localization.initialization_max_coarse_scan_points",
-    this->initialization_maximum_coarse_scan_points_);
-  this->get_parameter(
-    "localization.initialization_coarse_resolution_m",
-    this->initialization_coarse_resolution_m_);
-  this->get_parameter(
-    "localization.initialization_coarse_step_size_m",
-    this->initialization_coarse_step_size_m_);
-  this->get_parameter(
-    "localization.initialization_coarse_trans_epsilon",
-    this->initialization_coarse_transformation_epsilon_);
-  this->get_parameter(
-    "localization.initialization_coarse_max_iter",
-    this->initialization_coarse_maximum_iterations_);
-  this->get_parameter(
-    "localization.initialization_refinement_candidates",
-    this->initialization_refinement_candidates_);
-  this->get_parameter(
-    "localization.initialization_refinement_reserve_ms",
-    this->initialization_refinement_reserve_ms_);
-  this->get_parameter(
-    "localization.initialization_fitness_max_range_m",
-    this->initialization_fitness_max_range_m_);
+    "localization.initialization_confirmation_scans",
+    this->initialization_confirmation_scans_);
   this->get_parameter(
     "localization.initialization_max_fitness_score",
     this->initialization_maximum_fitness_score_);
@@ -379,11 +214,11 @@ LocalizationNode::LocalizationNode()
     "localization.initialization_min_score_margin",
     this->initialization_minimum_score_margin_);
   this->get_parameter(
-    "localization.initialization_distinct_translation_m",
-    this->initialization_distinct_translation_m_);
+    "localization.recovery_translation_span_m",
+    this->recovery_translation_span_m_);
   this->get_parameter(
-    "localization.initialization_distinct_rotation_deg",
-    this->initialization_distinct_rotation_deg_);
+    "localization.recovery_yaw_span_deg",
+    this->recovery_yaw_span_deg_);
 
   this->global_frame_id_ = normalizedFrame(this->global_frame_id_);
   this->odom_frame_id_ = normalizedFrame(this->odom_frame_id_);
@@ -394,123 +229,57 @@ LocalizationNode::LocalizationNode()
   {
     throw std::invalid_argument("localization frame IDs cannot be empty");
   }
-  if (this->odometry_buffer_duration_seconds_ <= 0.0 ||
-    this->odometry_buffer_max_samples_ < 2 ||
-    this->maximum_odometry_interpolation_gap_seconds_ <= 0.0 ||
-    this->maximum_odometry_age_seconds_ < 0.0 ||
-    this->maximum_scan_age_seconds_ < 0.0 ||
-    this->maximum_initial_pose_age_seconds_ < 0.0 ||
-    this->future_tolerance_seconds_ < 0.0 ||
-    this->quaternion_norm_tolerance_ < 0.0 ||
-    this->covariance_symmetry_tolerance_ < 0.0 ||
-    this->covariance_psd_tolerance_ < 0.0 ||
-    this->maximum_initial_position_stddev_m_ < 0.0 ||
-    this->maximum_initial_yaw_stddev_deg_ < 0.0 ||
-    this->initialization_confirmation_scans_ < 1 ||
+  ndt_localization::RobustInitializer::Config initializer_config;
+  if (this->initialization_confirmation_scans_ < 1 ||
     this->maximum_result_translation_delta_m_ <= 0.0 ||
     this->maximum_result_rotation_delta_deg_ <= 0.0 ||
-    this->maximum_confirmation_translation_delta_m_ <= 0.0 ||
-    this->maximum_confirmation_rotation_delta_deg_ <= 0.0 ||
     this->maximum_consecutive_rejections_ < 1 ||
-    this->ndt_max_iter_ < 1 ||
+    this->ndt_resolution_ <= 0.0 ||
     this->ndt_map_leaf_size_ < 0.0 ||
-    this->ndt_scan_leaf_size_ < 0.0 ||
     this->local_map_radius_m_ <= 0.0 ||
     this->maximum_local_map_points_ < 1 ||
-    this->minimum_local_map_points_ < 1 ||
-    this->minimum_local_map_points_ > this->maximum_local_map_points_ ||
+    static_cast<std::size_t>(this->maximum_local_map_points_) <
+    kMinimumLocalMapPoints ||
     this->maximum_scan_points_ < 1 ||
-    this->registration_deadline_ms_ <= 0.0 ||
-    this->deadline_watchdog_margin_ms_ < 0.0 ||
-    this->deadline_watchdog_margin_ms_ >=
-    this->registration_deadline_ms_ ||
-    this->initialization_timeout_ms_ <= 0.0 ||
-    this->initialization_confirmation_reserve_ms_ < 0.0 ||
-    this->initialization_refinement_reserve_ms_ < 0.0 ||
-    this->initialization_confirmation_reserve_ms_ +
-    this->initialization_refinement_reserve_ms_ >=
-    this->initialization_timeout_ms_ ||
-    this->initialization_stddev_multiplier_ <= 0.0 ||
-    this->initialization_minimum_translation_span_m_ < 0.0 ||
+    this->registration_deadline_ms_ <= kDeadlineWatchdogMarginMs ||
+    this->initialization_timeout_ms_ <=
+    kInitializationConfirmationReserveMs +
+    initializer_config.refinement_reserve_ms ||
     this->initialization_maximum_translation_span_m_ <
-    this->initialization_minimum_translation_span_m_ ||
-    this->initialization_minimum_yaw_span_deg_ < 0.0 ||
+    kInitializationMinimumTranslationSpanM ||
     this->initialization_maximum_yaw_span_deg_ <
-    this->initialization_minimum_yaw_span_deg_ ||
+    kInitializationMinimumYawSpanDeg ||
     this->recovery_translation_span_m_ <= 0.0 ||
     this->recovery_yaw_span_deg_ <= 0.0 ||
-    this->relocalization_retry_delay_ms_ < 0.0 ||
-    this->initialization_maximum_hypotheses_ < 1 ||
-    this->initialization_coarse_map_leaf_size_m_ < 0.0 ||
-    this->initialization_coarse_scan_leaf_size_m_ < 0.0 ||
-    this->initialization_maximum_coarse_scan_points_ < 1 ||
-    this->initialization_coarse_resolution_m_ <= 0.0 ||
-    this->initialization_coarse_step_size_m_ <= 0.0 ||
-    this->initialization_coarse_transformation_epsilon_ <= 0.0 ||
-    this->initialization_coarse_maximum_iterations_ < 1 ||
-    this->initialization_refinement_candidates_ < 1 ||
-    this->initialization_fitness_max_range_m_ <= 0.0 ||
     this->initialization_maximum_fitness_score_ < 0.0 ||
-    this->initialization_minimum_score_margin_ < 0.0 ||
-    this->initialization_distinct_translation_m_ <= 0.0 ||
-    this->initialization_distinct_rotation_deg_ <= 0.0)
+    this->initialization_minimum_score_margin_ < 0.0)
   {
     throw std::invalid_argument("invalid localization parameters");
   }
 
   this->odometry_buffer_ =
     std::make_unique<ndt_localization::OdometryBuffer>(
-    this->odometry_buffer_duration_seconds_,
-    static_cast<std::size_t>(this->odometry_buffer_max_samples_));
+    kOdometryBufferDurationSeconds, kOdometryBufferMaximumSamples);
   this->state_machine_ =
     std::make_unique<ndt_localization::LocalizationStateMachine>(
     static_cast<std::size_t>(this->initialization_confirmation_scans_));
-  ndt_localization::RobustInitializer::Config initializer_config;
   initializer_config.local_map_radius_m = this->local_map_radius_m_;
   initializer_config.maximum_local_map_points =
     static_cast<std::size_t>(this->maximum_local_map_points_);
-  initializer_config.minimum_local_map_points =
-    static_cast<std::size_t>(this->minimum_local_map_points_);
-  initializer_config.maximum_hypotheses =
-    static_cast<std::size_t>(this->initialization_maximum_hypotheses_);
-  initializer_config.coarse_map_leaf_size_m =
-    this->initialization_coarse_map_leaf_size_m_;
-  initializer_config.coarse_scan_leaf_size_m =
-    this->initialization_coarse_scan_leaf_size_m_;
-  initializer_config.maximum_coarse_scan_points =
-    static_cast<std::size_t>(
-    this->initialization_maximum_coarse_scan_points_);
-  initializer_config.coarse_resolution_m =
-    this->initialization_coarse_resolution_m_;
-  initializer_config.coarse_step_size_m =
-    this->initialization_coarse_step_size_m_;
-  initializer_config.coarse_transformation_epsilon =
-    this->initialization_coarse_transformation_epsilon_;
-  initializer_config.coarse_maximum_iterations =
-    this->initialization_coarse_maximum_iterations_;
-  initializer_config.refinement_scan_leaf_size_m =
-    this->ndt_scan_leaf_size_;
+  initializer_config.minimum_local_map_points = kMinimumLocalMapPoints;
+  initializer_config.refinement_scan_leaf_size_m = kNdtScanLeafSizeM;
   initializer_config.maximum_refinement_scan_points =
     static_cast<std::size_t>(this->maximum_scan_points_);
   initializer_config.refinement_resolution_m = this->ndt_resolution_;
-  initializer_config.refinement_step_size_m = this->ndt_step_size_;
+  initializer_config.refinement_step_size_m = kNdtStepSizeM;
   initializer_config.refinement_transformation_epsilon =
-    this->ndt_trans_epsilon_;
-  initializer_config.refinement_maximum_iterations = this->ndt_max_iter_;
-  initializer_config.refinement_candidates =
-    static_cast<std::size_t>(this->initialization_refinement_candidates_);
-  initializer_config.refinement_reserve_ms =
-    this->initialization_refinement_reserve_ms_;
-  initializer_config.fitness_max_range_m =
-    this->initialization_fitness_max_range_m_;
+    kNdtTransformationEpsilon;
+  initializer_config.refinement_maximum_iterations =
+    kNdtMaximumIterations;
   initializer_config.maximum_fitness_score =
     this->initialization_maximum_fitness_score_;
   initializer_config.minimum_score_margin =
     this->initialization_minimum_score_margin_;
-  initializer_config.distinct_translation_m =
-    this->initialization_distinct_translation_m_;
-  initializer_config.distinct_rotation_deg =
-    this->initialization_distinct_rotation_deg_;
   this->robust_initializer_ =
     std::make_unique<ndt_localization::RobustInitializer>(
     initializer_config);
@@ -629,9 +398,9 @@ void LocalizationNode::mapCallback(
   }
 
   this->ndt_.setResolution(this->ndt_resolution_);
-  this->ndt_.setStepSize(this->ndt_step_size_);
-  this->ndt_.setTransformationEpsilon(this->ndt_trans_epsilon_);
-  this->ndt_.setMaximumIterations(this->ndt_max_iter_);
+  this->ndt_.setStepSize(kNdtStepSizeM);
+  this->ndt_.setTransformationEpsilon(kNdtTransformationEpsilon);
+  this->ndt_.setMaximumIterations(kNdtMaximumIterations);
   this->map_kdtree_->setInputCloud(this->global_map_);
   this->robust_initializer_->setMap(this->global_map_);
   this->map_initialized_.store(true, std::memory_order_release);
@@ -725,7 +494,7 @@ ndt_localization::DecisionCode LocalizationNode::validateTimestamp(
   }
   return ndt_localization::validateTimestampNanoseconds(
     message_time.nanoseconds(), now_ns, maximum_age_seconds,
-    this->future_tolerance_seconds_, invalid_code, stale_code,
+    kFutureToleranceSeconds, invalid_code, stale_code,
     future_code).code;
 }
 
@@ -743,7 +512,7 @@ void LocalizationNode::odomCallback(
   double age_ms = 0.0;
   const ndt_localization::DecisionCode timestamp_result =
     this->validateTimestamp(
-    msg->header.stamp, this->maximum_odometry_age_seconds_,
+    msg->header.stamp, kMaximumOdometryAgeSeconds,
     ndt_localization::DecisionCode::ODOMETRY_STAMP_INVALID,
     ndt_localization::DecisionCode::ODOMETRY_STALE,
     ndt_localization::DecisionCode::ODOMETRY_FUTURE,
@@ -752,7 +521,7 @@ void LocalizationNode::odomCallback(
     this->publishStateDiagnostic(msg->header.stamp, timestamp_result);
     return;
   }
-  if (!validPose(msg->pose.pose, this->quaternion_norm_tolerance_)) {
+  if (!validPose(msg->pose.pose, kQuaternionNormTolerance)) {
     this->publishStateDiagnostic(
       msg->header.stamp,
       ndt_localization::DecisionCode::ODOMETRY_POSE_INVALID);
@@ -840,7 +609,7 @@ void LocalizationNode::scanCallback(
   }
   const ndt_localization::DecisionCode timestamp_result =
     this->validateTimestamp(
-    msg->header.stamp, this->maximum_scan_age_seconds_,
+    msg->header.stamp, kMaximumScanAgeSeconds,
     ndt_localization::DecisionCode::SCAN_STAMP_INVALID,
     ndt_localization::DecisionCode::SCAN_STALE,
     ndt_localization::DecisionCode::SCAN_FUTURE,
@@ -960,7 +729,7 @@ void LocalizationNode::enqueueScan(
     std::chrono::duration_cast<std::chrono::steady_clock::duration>(
     std::chrono::duration<double, std::milli>(
       this->registration_deadline_ms_ -
-      this->deadline_watchdog_margin_ms_));
+      kDeadlineWatchdogMarginMs));
   std::vector<std::shared_ptr<ScanTask>> superseded;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
@@ -1006,7 +775,7 @@ void LocalizationNode::enqueueInitializationScan(
         this->initialization_attempt_deadline_ -
         std::chrono::duration_cast<std::chrono::steady_clock::duration>(
         std::chrono::duration<double, std::milli>(
-          this->initialization_confirmation_reserve_ms_));
+          kInitializationConfirmationReserveMs));
       this->pending_initialization_task_ = task;
       queued = true;
     }
@@ -1142,7 +911,7 @@ void LocalizationNode::processInitializationTask(
     std::lock_guard<std::mutex> lock(this->odometry_mutex_);
     synchronized_odometry = this->odometry_buffer_->lookup(
       rclcpp::Time(task->message->header.stamp).nanoseconds(),
-      this->maximum_odometry_interpolation_gap_seconds_);
+      kMaximumOdometryInterpolationGapSeconds);
   }
   if (!synchronized_odometry.success) {
     {
@@ -1257,7 +1026,7 @@ void LocalizationNode::processInitializationTask(
           std::chrono::duration_cast<
           std::chrono::steady_clock::duration>(
           std::chrono::duration<double, std::milli>(
-            this->relocalization_retry_delay_ms_));
+            kRelocalizationRetryDelayMs));
       }
       if (!candidate_validation.valid && result.success) {
         metrics.decision = candidate_validation.code;
@@ -1361,7 +1130,7 @@ void LocalizationNode::processScanTask(
     std::lock_guard<std::mutex> lock(this->odometry_mutex_);
     synchronized_odometry = this->odometry_buffer_->lookup(
       rclcpp::Time(task->message->header.stamp).nanoseconds(),
-      this->maximum_odometry_interpolation_gap_seconds_);
+      kMaximumOdometryInterpolationGapSeconds);
   }
   metrics.odometry_before_gap_ms =
     synchronized_odometry.before_gap_seconds * 1000.0;
@@ -1435,7 +1204,7 @@ void LocalizationNode::processScanTask(
   pcl::PointCloud<PointType>::Ptr scan(
     new pcl::PointCloud<PointType>());
   pcl::fromROSMsg(*task->message, *scan);
-  scan = this->downsampleCloud(scan, this->ndt_scan_leaf_size_);
+  scan = this->downsampleCloud(scan, kNdtScanLeafSizeM);
   metrics.filtered_scan_points = scan->size();
   scan = this->capCloud(
     scan, static_cast<std::size_t>(this->maximum_scan_points_));
@@ -1452,7 +1221,7 @@ void LocalizationNode::processScanTask(
   pcl::PointCloud<PointType>::Ptr local_map =
     this->buildLocalMap(pose_guess.translation(), &metrics);
   if (local_map->size() <
-    static_cast<std::size_t>(this->minimum_local_map_points_))
+    kMinimumLocalMapPoints)
   {
     this->finalizeRejectedTask(
       task, metrics,
@@ -1476,9 +1245,6 @@ void LocalizationNode::processScanTask(
   metrics.matcher_ms = elapsedMilliseconds(matcher_start);
   metrics.converged = this->ndt_.hasConverged();
   metrics.iterations = this->ndt_.getFinalNumIteration();
-  if (metrics.converged && this->ndt_compute_fitness_score_) {
-    metrics.fitness_score = this->ndt_.getFitnessScore();
-  }
 
   bool task_already_decided = false;
   {
@@ -1583,8 +1349,8 @@ void LocalizationNode::processScanTask(
       const ndt_localization::InitializationObservation observation =
         this->state_machine_->observeInitializationCorrection(
         candidate_correction,
-        this->maximum_confirmation_translation_delta_m_,
-        this->maximum_confirmation_rotation_delta_deg_);
+        kMaximumConfirmationTranslationDeltaM,
+        kMaximumConfirmationRotationDeltaDeg);
       task->decided = true;
       task->decision = observation.code;
       metrics.translation_delta_m = observation.translation_delta_m;
@@ -1644,21 +1410,6 @@ void LocalizationNode::processScanTask(
       task->message->header.stamp,
       ndt_localization::DecisionCode::TRACKING_LOST);
     this->startRelocalization(task->message->header.stamp);
-  }
-
-  if (this->ndt_log_runtime_) {
-    const std::string generation_string =
-      std::to_string(metrics.generation);
-    RCLCPP_INFO_THROTTLE(
-      this->get_logger(), *this->get_clock(), 1000,
-      "NDT generation %s: %.3f ms, points: %zu -> %zu -> %zu, "
-      "target: %zu, state: %s, decision: %s",
-      generation_string.c_str(),
-      metrics.matcher_ms, metrics.raw_scan_points,
-      metrics.filtered_scan_points, metrics.capped_scan_points,
-      metrics.target_points,
-      ndt_localization::toString(this->state_machine_->state()),
-      ndt_localization::toString(metrics.decision));
   }
 }
 
@@ -1744,7 +1495,7 @@ void LocalizationNode::deadlineWorkerLoop()
             std::chrono::duration_cast<
             std::chrono::steady_clock::duration>(
             std::chrono::duration<double, std::milli>(
-              this->relocalization_retry_delay_ms_));
+              kRelocalizationRetryDelayMs));
         }
       }
     }
@@ -1796,9 +1547,6 @@ void LocalizationNode::publishLateResultDiagnostic(
   double matcher_ms,
   double completion_ms)
 {
-  if (!this->publish_scan_diagnostics_) {
-    return;
-  }
   diagnostic_msgs::msg::DiagnosticArray message;
   message.header.stamp = task.message->header.stamp;
   diagnostic_msgs::msg::DiagnosticStatus status;
@@ -1823,9 +1571,6 @@ void LocalizationNode::publishScanDiagnostic(
   const builtin_interfaces::msg::Time & stamp,
   const ScanMetrics & metrics)
 {
-  if (!this->publish_scan_diagnostics_) {
-    return;
-  }
   diagnostic_msgs::msg::DiagnosticArray message;
   message.header.stamp = stamp;
   diagnostic_msgs::msg::DiagnosticStatus status;
@@ -1891,9 +1636,6 @@ void LocalizationNode::publishInitializationDiagnostic(
   const builtin_interfaces::msg::Time & stamp,
   const InitializationMetrics & metrics)
 {
-  if (!this->publish_scan_diagnostics_) {
-    return;
-  }
   diagnostic_msgs::msg::DiagnosticArray message;
   message.header.stamp = stamp;
   diagnostic_msgs::msg::DiagnosticStatus status;
@@ -1948,9 +1690,6 @@ void LocalizationNode::publishStateDiagnostic(
   const builtin_interfaces::msg::Time & stamp,
   ndt_localization::DecisionCode code)
 {
-  if (!this->publish_scan_diagnostics_) {
-    return;
-  }
   diagnostic_msgs::msg::DiagnosticArray message;
   message.header.stamp = stamp;
   diagnostic_msgs::msg::DiagnosticStatus status;
@@ -2026,7 +1765,7 @@ void LocalizationNode::initialPoseCallback(
   double age_ms = 0.0;
   const ndt_localization::DecisionCode timestamp_result =
     this->validateTimestamp(
-    msg->header.stamp, this->maximum_initial_pose_age_seconds_,
+    msg->header.stamp, kMaximumInitialPoseAgeSeconds,
     ndt_localization::DecisionCode::INITIAL_POSE_STAMP_INVALID,
     ndt_localization::DecisionCode::INITIAL_POSE_STALE,
     ndt_localization::DecisionCode::INITIAL_POSE_FUTURE,
@@ -2051,15 +1790,15 @@ void LocalizationNode::initialPoseCallback(
     msg->pose.pose.orientation.z);
   ndt_localization::InitialPoseValidationLimits limits;
   limits.quaternion_norm_tolerance =
-    this->quaternion_norm_tolerance_;
+    kQuaternionNormTolerance;
   limits.covariance_symmetry_tolerance =
-    this->covariance_symmetry_tolerance_;
+    kCovarianceSymmetryTolerance;
   limits.covariance_psd_tolerance =
-    this->covariance_psd_tolerance_;
+    kCovariancePsdTolerance;
   limits.maximum_position_stddev_m =
-    this->maximum_initial_position_stddev_m_;
+    this->initialization_maximum_translation_span_m_;
   limits.maximum_yaw_stddev_deg =
-    this->maximum_initial_yaw_stddev_deg_;
+    this->initialization_maximum_yaw_span_deg_;
   const ndt_localization::ValidationResult pose_validation =
     ndt_localization::validateInitialPoseData(
     position, orientation, covariance, limits);
@@ -2078,10 +1817,10 @@ void LocalizationNode::initialPoseCallback(
     ndt_localization::initializationSearchBounds(
     position_stddev_m,
     yaw_stddev_deg,
-    this->initialization_stddev_multiplier_,
-    this->initialization_minimum_translation_span_m_,
+    kInitializationStandardDeviationMultiplier,
+    kInitializationMinimumTranslationSpanM,
     this->initialization_maximum_translation_span_m_,
-    this->initialization_minimum_yaw_span_deg_,
+    kInitializationMinimumYawSpanDeg,
     this->initialization_maximum_yaw_span_deg_);
 
   ndt_localization::OdometryLookup synchronized_odometry;
@@ -2089,7 +1828,7 @@ void LocalizationNode::initialPoseCallback(
     std::lock_guard<std::mutex> lock(this->odometry_mutex_);
     synchronized_odometry = this->odometry_buffer_->lookup(
       rclcpp::Time(msg->header.stamp).nanoseconds(),
-      this->maximum_odometry_interpolation_gap_seconds_);
+      kMaximumOdometryInterpolationGapSeconds);
   }
   const Eigen::Isometry3d initial_pose =
     poseToIsometry(msg->pose.pose);
@@ -2244,7 +1983,7 @@ void LocalizationNode::tryStartPendingInitialization()
   }
   const ndt_localization::DecisionCode timestamp_result =
     this->validateTimestamp(
-    pending_stamp, this->maximum_initial_pose_age_seconds_,
+    pending_stamp, kMaximumInitialPoseAgeSeconds,
     ndt_localization::DecisionCode::INITIAL_POSE_STAMP_INVALID,
     ndt_localization::DecisionCode::INITIAL_POSE_STALE,
     ndt_localization::DecisionCode::INITIAL_POSE_FUTURE,
@@ -2266,7 +2005,7 @@ void LocalizationNode::tryStartPendingInitialization()
     std::lock_guard<std::mutex> lock(this->odometry_mutex_);
     synchronized_odometry = this->odometry_buffer_->lookup(
       rclcpp::Time(pending_stamp).nanoseconds(),
-      this->maximum_odometry_interpolation_gap_seconds_);
+      kMaximumOdometryInterpolationGapSeconds);
   }
   if (synchronized_odometry.success) {
     {

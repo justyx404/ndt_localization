@@ -1,82 +1,31 @@
 /**:
   ros__parameters:
-    # Frame IDs
-    odom_frame_id: "odom_lidar"
-    base_frame_id: "base_link"
-    map_frame_id:  "map"
-
-    # NDT Parameters
+    # Deliberately small deployment interface. Numerical tolerances, queue
+    # policy, coarse-search mechanics, and diagnostic policy are internal
+    # compiled implementation defaults in the ndt_localization package.
     localization:
+      # Registration quality and workload.
       ndt_resolution: 1.0
-      ndt_step_size: 0.1
-      ndt_trans_epsilon: 0.005
-      ndt_max_iter: 15
-
-      # Phase 2 deterministic workload bounds.
       ndt_map_leaf_size: 0.15
-      ndt_scan_leaf_size: 0.0
       local_map_radius_m: 35.0
       max_local_map_points: 120000
-      min_local_map_points: 1000
       max_scan_points: 4000
       registration_deadline_ms: 80.0
-      deadline_watchdog_margin_ms: 1.0
-      ndt_log_runtime: false
-      # Computing PCL's full fitness score adds a separate O(scan points) pass.
-      ndt_compute_fitness_score: false
-      publish_scan_diagnostics: true
 
-      # Phase 1 synchronization and input validation.
-      odom_buffer_duration_seconds: 3.0
-      odom_buffer_max_samples: 500
-      max_odom_interpolation_gap_seconds: 0.15
-      max_odometry_age_seconds: 0.5
-      max_scan_age_seconds: 0.5
-      max_initial_pose_age_seconds: 1.0
-      future_tolerance_seconds: 0.1
-      quaternion_norm_tolerance: 0.001
-      covariance_symmetry_tolerance: 0.000001
-      covariance_psd_tolerance: 0.000000001
-      max_initial_position_stddev_m: 10.0
-      max_initial_yaw_stddev_deg: 180.0
-
-      # A prior and registration result remain unpublished until three
-      # consecutive candidate corrections agree.
-      initialization_confirmation_scans: 3
+      # Reject implausible scan-to-map jumps; enter recovery after repeated
+      # tracking failures.
       max_result_translation_delta_m: 1.0
       max_result_rotation_delta_deg: 20.0
-      max_confirmation_translation_delta_m: 0.5
-      max_confirmation_rotation_delta_deg: 10.0
       max_consecutive_rejections: 10
 
-      # Phase 3 covariance-aware coarse-to-fine initialization.
-      # The initializer has its own worker and global 2 s watchdog, so scan
-      # decisions retain the Phase 2 80 ms budget.
+      # Initial-pose search envelope and acceptance policy.
       initialization_timeout_ms: 2000.0
-      initialization_confirmation_reserve_ms: 350.0
-      initialization_stddev_multiplier: 2.5
-      initialization_min_translation_span_m: 1.0
       initialization_max_translation_span_m: 10.0
-      initialization_min_yaw_span_deg: 15.0
       initialization_max_yaw_span_deg: 180.0
-      initialization_max_hypotheses: 65
-      initialization_coarse_map_leaf_size_m: 0.5
-      initialization_coarse_scan_leaf_size_m: 0.4
-      initialization_max_coarse_scan_points: 2000
-      initialization_coarse_resolution_m: 2.0
-      initialization_coarse_step_size_m: 0.2
-      initialization_coarse_trans_epsilon: 0.05
-      initialization_coarse_max_iter: 8
-      initialization_refinement_candidates: 3
-      initialization_refinement_reserve_ms: 250.0
-      initialization_fitness_max_range_m: 2.0
+      initialization_confirmation_scans: 3
       initialization_max_fitness_score: 0.5
       initialization_min_score_margin: 0.01
-      initialization_distinct_translation_m: 0.5
-      initialization_distinct_rotation_deg: 5.0
 
-      # LOST-state recovery retains the last validated map correction while
-      # searching and only swaps corrections after three confirmations.
+      # LOST-state search envelope around the last validated correction.
       recovery_translation_span_m: 5.0
       recovery_yaw_span_deg: 90.0
-      relocalization_retry_delay_ms: 500.0

@@ -23,6 +23,16 @@ Translation is linearly interpolated and orientation uses quaternion SLERP.
 Samples are unavailable when either side of the interpolation interval exceeds
 the configured maximum gap.
 
+## Production parameter ownership
+
+`ndt_localization/config/localization.yaml` contains the 17 public localization
+tuning choices. Shared frames and the FAST-LIO/sensor/map pipeline remain in
+`spot_navigation/config/lio_localization.yaml`; the production Spot launch
+loads both files for the localizer. Optimizer mechanics, numerical tolerances,
+queue policy, and diagnostics are named compiled defaults and are intentionally
+absent from the ROS parameter interface. The complete classification and
+regression evidence are in `PHASE4_CONFIG_MINIMIZATION.md`.
+
 ## Offline reference validation
 
 The deterministic offline analyzer reads only the four reference topics
