@@ -57,7 +57,7 @@ include_directories(
   ${PCL_INCLUDE_DIRS}
 )
 
-# Phase 1/2/3 state, validation, workload-control, and initialization core
+# Localization state, validation, workload-control, and initialization core
 add_library(localization_core src/localization_core.cpp)
 target_link_libraries(localization_core Eigen3::Eigen)
 target_include_directories(localization_core PUBLIC
@@ -90,7 +90,7 @@ target_include_directories(robust_initializer PUBLIC
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
 )
 
-# Localization Node
+# Localization node
 add_executable(localization_node src/localization.cpp)
 target_link_libraries(
   localization_node
@@ -114,24 +114,10 @@ install(
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
-# Install launch files
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-  PATTERN "__pycache__" EXCLUDE
-  PATTERN "*.pyc" EXCLUDE
-)
-
-# Install config files
-install(DIRECTORY config
-  DESTINATION share/${PROJECT_NAME}
-)
-
-install(PROGRAMS
-  scripts/analyze_reference_bag.py
-  scripts/localization_benchmark_evaluator.py
-  scripts/synthetic_initial_pose.py
-  scripts/run_development_baseline.py
-  DESTINATION lib/${PROJECT_NAME}
+# Install production configuration
+install(
+  FILES config/localization.yaml
+  DESTINATION share/${PROJECT_NAME}/config
 )
 
 # Install include files
@@ -141,7 +127,6 @@ install(DIRECTORY include/
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  find_package(ament_cmake_pytest REQUIRED)
   ament_add_gtest(
     localization_core_test
     test/test_localization_core.cpp
@@ -165,11 +150,6 @@ if(BUILD_TESTING)
       Eigen3::Eigen
     )
   endif()
-  ament_add_pytest_test(
-    benchmark_math
-    test/test_benchmark_math.py
-    TIMEOUT 30
-  )
 endif()
 
 ament_package()

@@ -8,6 +8,7 @@ Phase 2 completed: 2026-07-29
 Phase 3 completed: 2026-07-29
 Replacement Phase 4 completed: 2026-07-29
 Post-Phase 4 refactor cleanup completed: 2026-07-29
+Production packaging cleanup completed: 2026-07-29
 Package: `ndt_localization`
 
 ## 1. Objective
@@ -424,6 +425,10 @@ the tracking registration stages without changing worker or deadline
 semantics. Evidence is recorded in
 `benchmark/PHASE4_REFACTOR_CLEANUP.md`.
 
+After validation, the replay-only Python executables, launch file, YAML files,
+and Python benchmark tests were removed from the production package. The
+validated reports remain as non-installed historical evidence in `benchmark/`.
+
 ### Phase 5: Held-out validation
 
 Run:
@@ -452,7 +457,6 @@ Likely package changes:
 - update [`include/localization.h`](include/localization.h);
 - update [`src/localization.cpp`](src/localization.cpp);
 - update [`config/localization.yaml`](config/localization.yaml);
-- update [`launch/localization.launch.py`](launch/localization.launch.py);
 - update the active [`lio_localization.yaml`](../spot_navigation/config/lio_localization.yaml);
 - add unit/integration tests;
 - add replay/benchmark tooling without modifying the source bags.

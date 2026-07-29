@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <stdexcept>
 #include <vector>
 
 namespace
@@ -32,36 +31,7 @@ namespace ndt_localization
 RobustInitializer::RobustInitializer(const Config & config)
 : config_(config),
   map_kdtree_(new pcl::KdTreeFLANN<Point>(true))
-{
-  if (config_.local_map_radius_m <= 0.0 ||
-    config_.maximum_local_map_points == 0 ||
-    config_.minimum_local_map_points == 0 ||
-    config_.minimum_local_map_points > config_.maximum_local_map_points ||
-    config_.maximum_hypotheses == 0 ||
-    config_.coarse_map_leaf_size_m < 0.0 ||
-    config_.coarse_scan_leaf_size_m < 0.0 ||
-    config_.maximum_coarse_scan_points == 0 ||
-    config_.coarse_resolution_m <= 0.0 ||
-    config_.coarse_step_size_m <= 0.0 ||
-    config_.coarse_transformation_epsilon <= 0.0 ||
-    config_.coarse_maximum_iterations < 1 ||
-    config_.refinement_scan_leaf_size_m < 0.0 ||
-    config_.maximum_refinement_scan_points == 0 ||
-    config_.refinement_resolution_m <= 0.0 ||
-    config_.refinement_step_size_m <= 0.0 ||
-    config_.refinement_transformation_epsilon <= 0.0 ||
-    config_.refinement_maximum_iterations < 1 ||
-    config_.refinement_candidates == 0 ||
-    config_.refinement_reserve_ms < 0.0 ||
-    config_.fitness_max_range_m <= 0.0 ||
-    config_.maximum_fitness_score < 0.0 ||
-    config_.minimum_score_margin < 0.0 ||
-    config_.distinct_translation_m <= 0.0 ||
-    config_.distinct_rotation_deg <= 0.0)
-  {
-    throw std::invalid_argument("invalid robust initializer configuration");
-  }
-}
+{}
 
 void RobustInitializer::setMap(const Cloud::ConstPtr & map)
 {
