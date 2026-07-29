@@ -1,11 +1,17 @@
 #pragma once
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <condition_variable>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "builtin_interfaces/msg/time.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
@@ -17,6 +23,7 @@
 #include "sensor_msgs/msg/point_cloud2.hpp"
 
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/registration/ndt.h>
@@ -47,6 +54,7 @@ private:
     double matcher_ms = 0.0;
     double validation_ms = 0.0;
     double total_ms = 0.0;
+    double queue_wait_ms = 0.0;
     double input_age_ms = 0.0;
     double odometry_before_gap_ms = 0.0;
     double odometry_after_gap_ms = 0.0;
@@ -55,7 +63,25 @@ private:
     double fitness_score = std::numeric_limits<double>::quiet_NaN();
     std::size_t raw_scan_points = 0;
     std::size_t filtered_scan_points = 0;
+    std::size_t capped_scan_points = 0;
+    std::size_t target_points = 0;
+    std::uint64_t generation = 0;
+    bool deadline_exceeded = false;
     int iterations = 0;
+  };
+
+  struct ScanTask
+  {
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr message;
+    std::uint64_t generation = 0;
+    std::chrono::steady_clock::time_point received_at;
+    std::chrono::steady_clock::time_point started_at;
+    std::chrono::steady_clock::time_point deadline;
+    bool waiting_for_odometry = false;
+    std::uint64_t required_odometry_sequence = 0;
+    bool decided = false;
+    ndt_localization::DecisionCode decision =
+      ndt_localization::DecisionCode::NONE;
   };
 
   void mapCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
@@ -67,6 +93,12 @@ private:
   pcl::PointCloud<PointType>::Ptr downsampleCloud(
     const pcl::PointCloud<PointType>::Ptr & cloud,
     double leaf_size);
+  pcl::PointCloud<PointType>::Ptr capCloud(
+    const pcl::PointCloud<PointType>::Ptr & cloud,
+    std::size_t maximum_points);
+  pcl::PointCloud<PointType>::Ptr buildLocalMap(
+    const Eigen::Vector3d & center,
+    ScanMetrics * metrics);
   ndt_localization::DecisionCode validateTimestamp(
     const builtin_interfaces::msg::Time & stamp,
     double maximum_age_seconds,
@@ -84,12 +116,35 @@ private:
   void publishStateDiagnostic(
     const builtin_interfaces::msg::Time & stamp,
     ndt_localization::DecisionCode code);
+  void publishLateResultDiagnostic(
+    const ScanTask & task,
+    double matcher_ms,
+    double completion_ms);
+  void publishImmediateScanRejection(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
+    ScanMetrics metrics,
+    ndt_localization::DecisionCode code);
+  void enqueueScan(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
+    const std::chrono::steady_clock::time_point & received_at);
+  void registrationWorkerLoop();
+  void deadlineWorkerLoop();
+  void processScanTask(const std::shared_ptr<ScanTask> & task);
+  bool finalizeRejectedTask(
+    const std::shared_ptr<ScanTask> & task,
+    ScanMetrics metrics,
+    ndt_localization::DecisionCode code,
+    bool registration_rejection);
+  void publishSupersededTasks(
+    const std::vector<std::shared_ptr<ScanTask>> & tasks);
+  std::vector<std::shared_ptr<ScanTask>>
+  invalidateRegistrationWorkLocked();
+  bool applyRejectionStateLocked(bool registration_rejection);
   void beginInitialization(
     const builtin_interfaces::msg::Time & stamp,
     const Eigen::Isometry3d & initial_pose,
     const Eigen::Isometry3d & synchronized_odometry);
   void tryStartPendingInitialization();
-  void processPendingScan();
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr map_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
@@ -105,20 +160,28 @@ private:
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   pcl::PointCloud<PointType>::Ptr global_map_;
+  pcl::KdTreeFLANN<PointType>::Ptr map_kdtree_;
   pcl::NormalDistributionsTransform<PointType, PointType> ndt_;
 
-  bool map_initialized_ = false;
+  std::atomic<bool> map_initialized_{false};
   std::size_t raw_map_points_ = 0;
   std::mutex odometry_mutex_;
   std::mutex pending_mutex_;
-  std::mutex scan_mutex_;
+  std::mutex registration_mutex_;
+  std::condition_variable registration_cv_;
+  std::thread registration_worker_;
+  std::thread deadline_worker_;
+  bool stop_registration_threads_ = false;
+  std::uint64_t latest_scan_generation_ = 0;
+  std::uint64_t odometry_sequence_ = 0;
+  std::shared_ptr<ScanTask> pending_scan_task_;
+  std::shared_ptr<ScanTask> active_scan_task_;
   std::unique_ptr<ndt_localization::OdometryBuffer> odometry_buffer_;
   std::unique_ptr<ndt_localization::LocalizationStateMachine> state_machine_;
   bool initial_pose_waiting_for_odometry_ = false;
   builtin_interfaces::msg::Time pending_initial_pose_stamp_;
   Eigen::Isometry3d pending_initial_pose_ = Eigen::Isometry3d::Identity();
-  sensor_msgs::msg::PointCloud2::ConstSharedPtr pending_scan_;
-  std::int64_t initialization_stamp_ns_ = 0;
+  std::atomic<std::int64_t> initialization_stamp_ns_{0};
 
   std::string global_frame_id_;
   std::string odom_frame_id_;
@@ -129,6 +192,12 @@ private:
   int ndt_max_iter_;
   double ndt_map_leaf_size_;
   double ndt_scan_leaf_size_;
+  double local_map_radius_m_;
+  int maximum_local_map_points_;
+  int minimum_local_map_points_;
+  int maximum_scan_points_;
+  double registration_deadline_ms_;
+  double deadline_watchdog_margin_ms_;
   bool ndt_log_runtime_;
   bool ndt_compute_fitness_score_;
   bool publish_scan_diagnostics_;

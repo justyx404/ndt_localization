@@ -10,7 +10,9 @@ import pytest
 
 SCRIPTS_PATH = Path(__file__).parents[1] / "scripts"
 SCRIPT_PATH = SCRIPTS_PATH / "localization_benchmark_evaluator.py"
-SPEC = importlib.util.spec_from_file_location("benchmark_evaluator", SCRIPT_PATH)
+SPEC = importlib.util.spec_from_file_location(
+    "benchmark_evaluator", SCRIPT_PATH
+)
 BENCHMARK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BENCHMARK)
 sys.modules["localization_benchmark_evaluator"] = BENCHMARK

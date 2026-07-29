@@ -205,7 +205,9 @@ def distribution(values):
 class LocalizationBenchmarkEvaluator(Node):
     def __init__(self):
         super().__init__("localization_benchmark_evaluator")
-        self.declare_parameter("output_directory", "/tmp/ndt_localization_benchmark")
+        self.declare_parameter(
+            "output_directory", "/tmp/ndt_localization_benchmark"
+        )
         self.declare_parameter("run_name", "benchmark")
         self.declare_parameter("bag_path", "")
         self.declare_parameter("replay_rate", 1.0)
@@ -264,6 +266,7 @@ class LocalizationBenchmarkEvaluator(Node):
         self.synthetic_initial_poses = []
         self.scan_metrics = []
         self.state_events = []
+        self.late_results = []
         self.finalized = False
 
         qos = QoSProfile(depth=2000)
@@ -405,16 +408,36 @@ class LocalizationBenchmarkEvaluator(Node):
                     }
                 )
                 continue
+            if status.name == "ndt_localization/late_result":
+                self.late_results.append(
+                    {
+                        "timestamp": timestamp,
+                        "reason": values.get("reason", status.message),
+                        "generation": int(values.get("generation", "0")),
+                        "matcher_ms": float(
+                            values.get("matcher_ms", "nan")
+                        ),
+                        "completion_ms": float(
+                            values.get("completion_ms", "nan")
+                        ),
+                    }
+                )
+                continue
             if status.name != "ndt_localization/scan":
                 continue
             row = {
                 "timestamp": timestamp,
                 "decision": values.get("decision", status.message),
                 "accepted": values.get("accepted", "false").lower() == "true",
-                "converged": values.get("converged", "false").lower() == "true",
+                "converged": (
+                    values.get("converged", "false").lower() == "true"
+                ),
                 "state": values.get("state", "UNKNOWN"),
                 "correction_valid": (
                     values.get("correction_valid", "false").lower() == "true"
+                ),
+                "deadline_exceeded": (
+                    values.get("deadline_exceeded", "false").lower() == "true"
                 ),
             }
             for key in (
@@ -423,7 +446,9 @@ class LocalizationBenchmarkEvaluator(Node):
                 "matcher_ms",
                 "validation_ms",
                 "total_ms",
+                "queue_wait_ms",
                 "input_age_ms",
+                "decision_deadline_ms",
                 "odometry_before_gap_ms",
                 "odometry_after_gap_ms",
                 "translation_delta_m",
@@ -437,8 +462,10 @@ class LocalizationBenchmarkEvaluator(Node):
             for key in (
                 "scan_points_raw",
                 "scan_points_filtered",
+                "scan_points_capped",
                 "map_points_raw",
                 "target_points",
+                "generation",
                 "iterations",
                 "confirmation_count",
                 "consecutive_rejections",
@@ -463,6 +490,7 @@ class LocalizationBenchmarkEvaluator(Node):
         self.synthetic_initial_poses.sort(key=lambda item: item[0])
         self.scan_metrics.sort(key=lambda item: item["timestamp"])
         self.state_events.sort(key=lambda item: item["timestamp"])
+        self.late_results.sort(key=lambda item: item["timestamp"])
 
         reference_rows = self._reference_rows()
         initial_pose_rows = self._initial_pose_rows()
@@ -506,20 +534,25 @@ class LocalizationBenchmarkEvaluator(Node):
                 "converged",
                 "state",
                 "correction_valid",
+                "deadline_exceeded",
                 "conversion_ms",
                 "local_map_ms",
                 "matcher_ms",
                 "validation_ms",
                 "total_ms",
+                "queue_wait_ms",
                 "input_age_ms",
+                "decision_deadline_ms",
                 "odometry_before_gap_ms",
                 "odometry_after_gap_ms",
                 "translation_delta_m",
                 "rotation_delta_deg",
                 "scan_points_raw",
                 "scan_points_filtered",
+                "scan_points_capped",
                 "map_points_raw",
                 "target_points",
+                "generation",
                 "iterations",
                 "confirmation_count",
                 "consecutive_rejections",
@@ -538,11 +571,24 @@ class LocalizationBenchmarkEvaluator(Node):
                 "odometry_buffer_samples",
             ),
         )
+        self._write_csv(
+            "late_results.csv",
+            self.late_results,
+            (
+                "timestamp",
+                "reason",
+                "generation",
+                "matcher_ms",
+                "completion_ms",
+            ),
+        )
 
         summary = self._build_summary(reference_rows, initial_pose_rows)
         summary_path = os.path.join(self.output_directory, "summary.json")
         with open(summary_path, "w", encoding="utf-8") as output:
-            json.dump(summary, output, indent=2, sort_keys=True, allow_nan=False)
+            json.dump(
+                summary, output, indent=2, sort_keys=True, allow_nan=False
+            )
             output.write("\n")
         self._write_markdown_summary(summary)
         if rclpy.ok():
@@ -601,8 +647,12 @@ class LocalizationBenchmarkEvaluator(Node):
                     "reconstructed_z": (
                         reconstructed[0][2] if reconstructed else float("nan")
                     ),
-                    "reconstruction_translation_error_m": reconstruction_error[0],
-                    "reconstruction_rotation_error_deg": reconstruction_error[1],
+                    "reconstruction_translation_error_m": (
+                        reconstruction_error[0]
+                    ),
+                    "reconstruction_rotation_error_deg": (
+                        reconstruction_error[1]
+                    ),
                     "localization_x": (
                         local_pose[0][0] if local_pose else float("nan")
                     ),
@@ -672,8 +722,9 @@ class LocalizationBenchmarkEvaluator(Node):
         total_latencies = [row["total_ms"] for row in self.scan_metrics]
         deadline_misses = sum(
             1
-            for latency in total_latencies
-            if math.isfinite(latency) and latency > self.deadline_ms
+            for row, latency in zip(self.scan_metrics, total_latencies)
+            if row["deadline_exceeded"]
+            or (math.isfinite(latency) and latency > self.deadline_ms)
         )
         launch_values = {
             "bag_path": self.bag_path,
@@ -682,7 +733,9 @@ class LocalizationBenchmarkEvaluator(Node):
             "rate": self.replay_rate,
             "start_offset": self.start_offset,
             "config_file": self.config_file,
-            "initial_pose_delay": self.initial_pose_parameters["delay_seconds"],
+            "initial_pose_delay": self.initial_pose_parameters[
+                "delay_seconds"
+            ],
             "translation_x": self.initial_pose_parameters["translation_x"],
             "translation_y": self.initial_pose_parameters["translation_y"],
             "translation_z": self.initial_pose_parameters["translation_z"],
@@ -693,16 +746,19 @@ class LocalizationBenchmarkEvaluator(Node):
             ],
             "deadline_ms": self.deadline_ms,
         }
-        command = "ros2 launch ndt_localization benchmark_replay.launch.py " + " ".join(
-            "%s:=%s" % (key, shlex.quote(str(value)))
-            for key, value in launch_values.items()
+        command = (
+            "ros2 launch ndt_localization benchmark_replay.launch.py "
+            + " ".join(
+                "%s:=%s" % (key, shlex.quote(str(value)))
+                for key, value in launch_values.items()
+            )
         )
         config_sha256 = None
         if self.config_file and os.path.isfile(self.config_file):
             with open(self.config_file, "rb") as config_input:
                 config_sha256 = hashlib.sha256(config_input.read()).hexdigest()
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "run": {
                 "name": self.run_name,
@@ -735,15 +791,19 @@ class LocalizationBenchmarkEvaluator(Node):
                 "synthetic_initial_pose": len(self.synthetic_initial_poses),
                 "scan_diagnostics": len(self.scan_metrics),
                 "state_events": len(self.state_events),
+                "late_results": len(self.late_results),
             },
             "state_events": self.state_events,
+            "late_results": self.late_results,
             "localization_evaluation_start_timestamp": (
                 self.synthetic_initial_poses[0][0]
                 if self.synthetic_initial_poses
                 else None
             ),
             "reference_reconstruction": {
-                "translation_error_m": distribution(reconstruction_translation),
+                "translation_error_m": distribution(
+                    reconstruction_translation
+                ),
                 "rotation_error_deg": distribution(reconstruction_rotation),
             },
             "recorded_initial_pose_header_timestamp_check": {
@@ -774,8 +834,32 @@ class LocalizationBenchmarkEvaluator(Node):
                     "matcher_ms",
                     "validation_ms",
                     "total_ms",
+                    "queue_wait_ms",
                     "input_age_ms",
                 )
+            },
+            "workload_bounds": {
+                "scan_points_raw": distribution(
+                    [row["scan_points_raw"] for row in self.scan_metrics]
+                ),
+                "scan_points_filtered": distribution(
+                    [
+                        row["scan_points_filtered"]
+                        for row in self.scan_metrics
+                    ]
+                ),
+                "scan_points_capped": distribution(
+                    [
+                        row["scan_points_capped"]
+                        for row in self.scan_metrics
+                    ]
+                ),
+                "target_points": distribution(
+                    [row["target_points"] for row in self.scan_metrics]
+                ),
+                "late_completion_ms": distribution(
+                    [row["completion_ms"] for row in self.late_results]
+                ),
             },
             "registration_validation": {
                 "translation_delta_m": distribution(
@@ -820,7 +904,9 @@ class LocalizationBenchmarkEvaluator(Node):
             "localization_against_recorded_reference"
         ]["translation_error_m"]
         latency = summary["latency_ms"]["total_ms"]
+        queue_wait = summary["latency_ms"]["queue_wait_ms"]
         decisions = summary["scan_decisions"]
+        workload = summary["workload_bounds"]
 
         def metric(data, key):
             value = data.get(key)
@@ -832,22 +918,45 @@ class LocalizationBenchmarkEvaluator(Node):
             "Generated: %s" % summary["generated_at_utc"],
             "",
             "This report compares against recorded localization output. It is "
-            "regression/pseudo-ground-truth, not independent survey ground truth.",
+            "regression/pseudo-ground-truth, not independent survey ground "
+            "truth.",
             "",
             "| Metric | p50 | p95 | p99 | maximum |",
             "|---|---:|---:|---:|---:|",
             "| Reference reconstruction translation (m) | %s | %s | %s | %s |"
-            % tuple(metric(reference, key) for key in ("p50", "p95", "p99", "maximum")),
+            % tuple(
+                metric(reference, key)
+                for key in ("p50", "p95", "p99", "maximum")
+            ),
             "| Localizer translation (m) | %s | %s | %s | %s |"
-            % tuple(metric(localization, key) for key in ("p50", "p95", "p99", "maximum")),
+            % tuple(
+                metric(localization, key)
+                for key in ("p50", "p95", "p99", "maximum")
+            ),
             "| Scan decision latency (ms) | %s | %s | %s | %s |"
-            % tuple(metric(latency, key) for key in ("p50", "p95", "p99", "maximum")),
+            % tuple(
+                metric(latency, key)
+                for key in ("p50", "p95", "p99", "maximum")
+            ),
+            "| Registration queue wait (ms) | %s | %s | %s | %s |"
+            % tuple(
+                metric(queue_wait, key)
+                for key in ("p50", "p95", "p99", "maximum")
+            ),
             "",
             "- Scan decisions: %d" % summary["samples"]["scan_diagnostics"],
             "- Accepted: %d" % decisions["accepted"],
             "- Rejected/skipped: %d" % decisions["rejected"],
-            "- Deadline misses (> %.3f ms): %d"
+            "- Intentional registration timeouts: %d"
+            % decisions["counts"].get("registration_timeout", 0),
+            "- Deadline overruns (> %.3f ms): %d"
             % (summary["run"]["deadline_ms"], decisions["deadline_misses"]),
+            "- Late matcher completions discarded: %d"
+            % summary["samples"]["late_results"],
+            "- Maximum capped scan points: %s"
+            % metric(workload["scan_points_capped"], "maximum"),
+            "- Maximum local-map target points: %s"
+            % metric(workload["target_points"], "maximum"),
             "",
             "Reproduction command:",
             "",

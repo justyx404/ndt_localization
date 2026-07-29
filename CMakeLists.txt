@@ -61,7 +61,7 @@ include_directories(
   ${PCL_INCLUDE_DIRS}
 )
 
-# Phase 1 state, synchronization, and validation core
+# Phase 1/2 state, synchronization, validation, and workload-control core
 add_library(localization_core src/localization_core.cpp)
 target_link_libraries(localization_core Eigen3::Eigen)
 target_include_directories(localization_core PUBLIC

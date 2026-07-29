@@ -126,6 +126,12 @@ const char * toString(DecisionCode code)
       return "scan_empty";
     case DecisionCode::SCAN_SUPERSEDED:
       return "scan_superseded";
+    case DecisionCode::REGISTRATION_TIMEOUT:
+      return "registration_timeout";
+    case DecisionCode::RESULT_GENERATION_STALE:
+      return "result_generation_stale";
+    case DecisionCode::LOCAL_MAP_INSUFFICIENT:
+      return "local_map_insufficient";
     case DecisionCode::INITIAL_POSE_FRAME_INVALID:
       return "initial_pose_frame_invalid";
     case DecisionCode::INITIAL_POSE_STAMP_INVALID:
@@ -314,6 +320,46 @@ ValidationResult validateInitializationScanTimestamp(
   result.valid = true;
   result.code = DecisionCode::NONE;
   return result;
+}
+
+bool deadlineExpired(
+  std::int64_t start_steady_time_ns,
+  std::int64_t current_steady_time_ns,
+  double deadline_ms)
+{
+  if (start_steady_time_ns < 0 ||
+    current_steady_time_ns < start_steady_time_ns ||
+    !std::isfinite(deadline_ms) || deadline_ms < 0.0)
+  {
+    return true;
+  }
+  const double elapsed_ms =
+    static_cast<double>(
+    current_steady_time_ns - start_steady_time_ns) / 1.0e6;
+  return elapsed_ms >= deadline_ms;
+}
+
+std::vector<std::size_t> deterministicSampleIndices(
+  std::size_t input_size,
+  std::size_t maximum_size)
+{
+  if (input_size == 0 || maximum_size == 0) {
+    return {};
+  }
+  const std::size_t output_size = std::min(input_size, maximum_size);
+  std::vector<std::size_t> indices;
+  indices.reserve(output_size);
+  if (output_size == input_size) {
+    for (std::size_t index = 0; index < input_size; ++index) {
+      indices.push_back(index);
+    }
+    return indices;
+  }
+
+  for (std::size_t index = 0; index < output_size; ++index) {
+    indices.push_back(index * input_size / output_size);
+  }
+  return indices;
 }
 
 ValidationResult validateInitialPoseData(

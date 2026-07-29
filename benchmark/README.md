@@ -1,9 +1,9 @@
 # Localization benchmark harness
 
-This harness implements the measurement foundation from Phase 0 and the
-state/validation observability required by Phase 1 of
-`ROBUST_LOCALIZATION_PLAN.md`. It keeps recorded localization outputs isolated
-from the node under test:
+This harness implements the measurement foundation from Phase 0, the
+state/validation observability required by Phase 1, and the bounded-workload
+measurements required by Phase 2 of `ROBUST_LOCALIZATION_PLAN.md`. It keeps
+recorded localization outputs isolated from the node under test:
 
 - recorded `/tf` becomes `/reference/tf`;
 - recorded `/odometry_map` becomes `/reference/odometry_map`;
@@ -77,14 +77,19 @@ Each live run writes:
 - `initial_pose_checks.csv`;
 - `scan_metrics.csv`;
 - `state_events.csv`;
+- `late_results.csv`;
 - `summary.json`;
 - `report.md`.
 
 `scan_metrics.csv` includes the localization state, correction-valid flag,
 confirmation/rejection counters, synchronized-odometry gaps, and candidate
-transform deltas for every scan decision. `state_events.csv` records
-initialization, validation rejection, and loss transitions. The summary keeps
-reference and localizer TF counts separate as
+transform deltas for every scan decision. Phase 2 fields include generation,
+queue wait, decision deadline, deadline status, deterministic scan cap, local
+map size, and stage timings. `late_results.csv` records matcher work that
+finished after its scan had already been superseded or timed out; such results
+are diagnostic-only and cannot update the correction. `state_events.csv`
+records initialization, validation rejection, and loss transitions. The
+summary keeps reference and localizer TF counts separate as
 `map_to_odom_transforms` and `localization_map_to_odom_transforms`.
 
 ## Four-bag development baseline

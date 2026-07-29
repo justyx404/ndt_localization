@@ -10,14 +10,19 @@
       ndt_resolution: 1.0
       ndt_step_size: 0.1
       ndt_trans_epsilon: 0.005
-      ndt_max_iter: 30
-      # Zero preserves the untouched baseline. Benchmark/tuned configurations
-      # must set these explicitly when filtering is under test.
-      ndt_map_leaf_size: 0.0
+      ndt_max_iter: 15
+
+      # Phase 2 deterministic workload bounds.
+      ndt_map_leaf_size: 0.15
       ndt_scan_leaf_size: 0.0
+      local_map_radius_m: 35.0
+      max_local_map_points: 120000
+      min_local_map_points: 1000
+      max_scan_points: 4000
+      registration_deadline_ms: 80.0
+      deadline_watchdog_margin_ms: 1.0
       ndt_log_runtime: false
-      # Computing PCL's full fitness score adds a separate O(scan points)
-      # pass. Keep it disabled for untouched matcher timing baselines.
+      # Computing PCL's full fitness score adds a separate O(scan points) pass.
       ndt_compute_fitness_score: false
       publish_scan_diagnostics: true
 

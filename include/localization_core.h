@@ -6,6 +6,7 @@
 #include <deque>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include <Eigen/Geometry>
 
@@ -45,6 +46,9 @@ enum class DecisionCode
   SCAN_PRECEDES_INITIALIZATION,
   SCAN_EMPTY,
   SCAN_SUPERSEDED,
+  REGISTRATION_TIMEOUT,
+  RESULT_GENERATION_STALE,
+  LOCAL_MAP_INSUFFICIENT,
   INITIAL_POSE_FRAME_INVALID,
   INITIAL_POSE_STAMP_INVALID,
   INITIAL_POSE_STALE,
@@ -128,6 +132,15 @@ ValidationResult validateTimestampNanoseconds(
 ValidationResult validateInitializationScanTimestamp(
   std::int64_t scan_timestamp_ns,
   std::int64_t initialization_timestamp_ns);
+
+bool deadlineExpired(
+  std::int64_t start_steady_time_ns,
+  std::int64_t current_steady_time_ns,
+  double deadline_ms);
+
+std::vector<std::size_t> deterministicSampleIndices(
+  std::size_t input_size,
+  std::size_t maximum_size);
 
 ValidationResult validateInitialPoseData(
   const Eigen::Vector3d & position,

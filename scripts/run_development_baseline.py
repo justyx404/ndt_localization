@@ -62,8 +62,9 @@ def write_aggregate(output_directory, results, command):
         "",
         "| Bag | Replay status | Scans | Accepted | Reference p95 (m) | "
         "Reference repeatable | Localizer p95 (m) | Decision p95 / max (ms) | "
-        "Max input age (ms) | Deadline misses |",
-        "|---|---|---:|---:|---:|:---:|---:|---:|---:|---:|",
+        "Queue p95 / max (ms) | Max input age (ms) | Late discarded | "
+        "Deadline overruns |",
+        "|---|---|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name in DEVELOPMENT_BAGS:
         result = results.get(name, {})
@@ -91,8 +92,17 @@ def write_aggregate(output_directory, results, command):
             if p95_latency is None or max_latency is None
             else "%.3f / %.3f" % (p95_latency, max_latency)
         )
+        queue_wait = replay.get("latency_ms", {}).get("queue_wait_ms", {})
+        p95_queue = queue_wait.get("p95")
+        max_queue = queue_wait.get("maximum")
+        queue_text = (
+            "n/a"
+            if p95_queue is None or max_queue is None
+            else "%.3f / %.3f" % (p95_queue, max_queue)
+        )
         lines.append(
-            "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |"
+            "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | "
+            "%s |"
             % (
                 name,
                 result.get("status", "not_run"),
@@ -114,9 +124,11 @@ def write_aggregate(output_directory, results, command):
                     "p95",
                 ),
                 latency_text,
+                queue_text,
                 nested_metric(
                     replay, ("latency_ms", "input_age_ms"), "maximum"
                 ),
+                samples.get("late_results", "n/a"),
                 decisions.get("deadline_misses", "n/a"),
             )
         )

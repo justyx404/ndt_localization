@@ -123,6 +123,38 @@ TEST(TimestampValidation, InitializationRequiresLaterScans)
       11 * kSecond, 10 * kSecond).valid);
 }
 
+TEST(WorkloadBounds, DetectsDeadlineAtBudget)
+{
+  EXPECT_FALSE(
+    ndt_localization::deadlineExpired(
+      10 * kSecond, 10 * kSecond + 79999999LL, 80.0));
+  EXPECT_TRUE(
+    ndt_localization::deadlineExpired(
+      10 * kSecond, 10 * kSecond + 80000000LL, 80.0));
+  EXPECT_TRUE(
+    ndt_localization::deadlineExpired(
+      10 * kSecond, 9 * kSecond, 80.0));
+  EXPECT_TRUE(
+    ndt_localization::deadlineExpired(
+      -1, 10 * kSecond, 80.0));
+}
+
+TEST(WorkloadBounds, SelectsDeterministicEvenlySpacedIndices)
+{
+  EXPECT_EQ(
+    ndt_localization::deterministicSampleIndices(0, 5),
+    (std::vector<std::size_t>{}));
+  EXPECT_EQ(
+    ndt_localization::deterministicSampleIndices(5, 0),
+    (std::vector<std::size_t>{}));
+  EXPECT_EQ(
+    ndt_localization::deterministicSampleIndices(3, 5),
+    (std::vector<std::size_t>{0, 1, 2}));
+  EXPECT_EQ(
+    ndt_localization::deterministicSampleIndices(10, 4),
+    (std::vector<std::size_t>{0, 2, 5, 7}));
+}
+
 TEST(InitialPoseValidation, RejectsMalformedAndAmbiguousInputs)
 {
   ndt_localization::InitialPoseValidationLimits limits;
