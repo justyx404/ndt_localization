@@ -500,7 +500,6 @@ class LocalizationBenchmarkEvaluator(Node):
                 "odometry_after_gap_ms",
                 "translation_delta_m",
                 "rotation_delta_deg",
-                "fitness_score",
             ):
                 try:
                     row[key] = float(values.get(key, "nan"))
@@ -604,7 +603,6 @@ class LocalizationBenchmarkEvaluator(Node):
                 "iterations",
                 "confirmation_count",
                 "consecutive_rejections",
-                "fitness_score",
             ),
         )
         self._write_csv(

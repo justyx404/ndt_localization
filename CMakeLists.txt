@@ -26,18 +26,15 @@ find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
-find_package(pcl_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
 
 # Thirdparty libraries
 find_package(Eigen3 REQUIRED)
-find_package(PCL REQUIRED COMPONENTS common io segmentation filters kdtree search registration)
+find_package(PCL REQUIRED COMPONENTS common filters kdtree registration)
 
 set(dependencies
   rclcpp
@@ -46,13 +43,10 @@ set(dependencies
   geometry_msgs
   nav_msgs
   sensor_msgs
-  std_msgs
   std_srvs
   tf2
   tf2_ros
   tf2_eigen
-  tf2_geometry_msgs
-  pcl_ros
   pcl_conversions
 )
 
@@ -71,10 +65,23 @@ target_include_directories(localization_core PUBLIC
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
 )
 
+add_library(point_cloud_utils src/point_cloud_utils.cpp)
+target_link_libraries(
+  point_cloud_utils
+  localization_core
+  ${PCL_LIBRARIES}
+  Eigen3::Eigen
+)
+target_include_directories(point_cloud_utils PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+)
+
 add_library(robust_initializer src/robust_initializer.cpp)
 target_link_libraries(
   robust_initializer
   localization_core
+  point_cloud_utils
   ${PCL_LIBRARIES}
   Eigen3::Eigen
 )
@@ -88,6 +95,7 @@ add_executable(localization_node src/localization.cpp)
 target_link_libraries(
   localization_node
   localization_core
+  point_cloud_utils
   robust_initializer
   ${PCL_LIBRARIES}
   Eigen3::Eigen
@@ -95,7 +103,12 @@ target_link_libraries(
 ament_target_dependencies(localization_node ${dependencies})
 
 # Install targets
-install(TARGETS localization_node localization_core robust_initializer
+install(
+  TARGETS
+    localization_node
+    localization_core
+    point_cloud_utils
+    robust_initializer
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -137,6 +150,18 @@ if(BUILD_TESTING)
     target_link_libraries(
       localization_core_test
       localization_core
+      Eigen3::Eigen
+    )
+  endif()
+  ament_add_gtest(
+    point_cloud_utils_test
+    test/test_point_cloud_utils.cpp
+  )
+  if(TARGET point_cloud_utils_test)
+    target_link_libraries(
+      point_cloud_utils_test
+      point_cloud_utils
+      ${PCL_LIBRARIES}
       Eigen3::Eigen
     )
   endif()

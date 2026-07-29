@@ -31,7 +31,9 @@ tuning choices. Shared frames and the FAST-LIO/sensor/map pipeline remain in
 loads both files for the localizer. Optimizer mechanics, numerical tolerances,
 queue policy, and diagnostics are named compiled defaults and are intentionally
 absent from the ROS parameter interface. The complete classification and
-regression evidence are in `PHASE4_CONFIG_MINIMIZATION.md`.
+regression evidence are in `PHASE4_CONFIG_MINIMIZATION.md`; the subsequent
+dead-code and tracking-pipeline cleanup is recorded in
+`PHASE4_REFACTOR_CLEANUP.md`.
 
 ## Offline reference validation
 

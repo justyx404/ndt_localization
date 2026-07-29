@@ -4,10 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <stdexcept>
-#include <utility>
 #include <vector>
-
-#include <pcl/filters/voxel_grid.h>
 
 namespace
 {
@@ -72,74 +69,6 @@ void RobustInitializer::setMap(const Cloud::ConstPtr & map)
   map_kdtree_->setInputCloud(map_);
 }
 
-RobustInitializer::Cloud::Ptr RobustInitializer::downsample(
-  const Cloud::ConstPtr & cloud,
-  double leaf_size_m) const
-{
-  if (!cloud || cloud->empty() || leaf_size_m <= 0.0) {
-    Cloud::Ptr copy(new Cloud());
-    if (cloud) {
-      *copy = *cloud;
-    }
-    return copy;
-  }
-  Cloud::Ptr filtered(new Cloud());
-  pcl::VoxelGrid<Point> voxel_grid;
-  voxel_grid.setInputCloud(cloud);
-  voxel_grid.setLeafSize(
-    leaf_size_m, leaf_size_m, leaf_size_m);
-  voxel_grid.filter(*filtered);
-  return filtered;
-}
-
-RobustInitializer::Cloud::Ptr RobustInitializer::cap(
-  const Cloud::ConstPtr & cloud,
-  std::size_t maximum_points) const
-{
-  Cloud::Ptr capped(new Cloud());
-  if (!cloud) {
-    return capped;
-  }
-  if (cloud->size() <= maximum_points) {
-    *capped = *cloud;
-    return capped;
-  }
-  capped->reserve(maximum_points);
-  capped->is_dense = cloud->is_dense;
-  for (const std::size_t index :
-    deterministicSampleIndices(cloud->size(), maximum_points))
-  {
-    capped->push_back((*cloud)[index]);
-  }
-  return capped;
-}
-
-RobustInitializer::Cloud::Ptr RobustInitializer::localMap(
-  const Eigen::Vector3d & center,
-  double radius_m,
-  std::size_t maximum_points) const
-{
-  Cloud::Ptr local_map(new Cloud());
-  if (!map_ || map_->empty()) {
-    return local_map;
-  }
-  Point query;
-  query.x = static_cast<float>(center.x());
-  query.y = static_cast<float>(center.y());
-  query.z = static_cast<float>(center.z());
-  std::vector<int> indices;
-  std::vector<float> squared_distances;
-  map_kdtree_->radiusSearch(
-    query, radius_m, indices, squared_distances,
-    static_cast<unsigned int>(maximum_points));
-  local_map->reserve(indices.size());
-  local_map->is_dense = map_->is_dense;
-  for (const int index : indices) {
-    local_map->push_back((*map_)[static_cast<std::size_t>(index)]);
-  }
-  return local_map;
-}
-
 Eigen::Isometry3d RobustInitializer::applyOffset(
   const Eigen::Isometry3d & prior_pose,
   const HypothesisOffset & offset) const
@@ -192,9 +121,9 @@ RobustInitializer::Result RobustInitializer::search(
   result.hypotheses = offsets.size();
   const double search_radius =
     config_.local_map_radius_m + request.bounds.translation_span_m;
-  Cloud::Ptr target = localMap(
-    request.prior_pose.translation(), search_radius,
-    config_.maximum_local_map_points);
+  Cloud::ConstPtr target = radiusSubmap(
+    map_, map_kdtree_, request.prior_pose.translation(),
+    search_radius, config_.maximum_local_map_points);
   result.target_points = target->size();
   if (target->size() < config_.minimum_local_map_points) {
     result.code = DecisionCode::LOCAL_MAP_INSUFFICIENT;
@@ -202,11 +131,11 @@ RobustInitializer::Result RobustInitializer::search(
     return result;
   }
 
-  Cloud::Ptr coarse_target =
-    downsample(target, config_.coarse_map_leaf_size_m);
-  Cloud::Ptr coarse_scan =
-    downsample(request.scan, config_.coarse_scan_leaf_size_m);
-  coarse_scan = cap(
+  Cloud::ConstPtr coarse_target =
+    voxelDownsample(target, config_.coarse_map_leaf_size_m);
+  Cloud::ConstPtr coarse_scan =
+    voxelDownsample(request.scan, config_.coarse_scan_leaf_size_m);
+  coarse_scan = deterministicallyCap(
     coarse_scan, config_.maximum_coarse_scan_points);
   result.scan_points = coarse_scan->size();
   if (coarse_scan->empty()) {
@@ -289,9 +218,9 @@ RobustInitializer::Result RobustInitializer::search(
     }
   }
 
-  Cloud::Ptr refinement_scan =
-    downsample(request.scan, config_.refinement_scan_leaf_size_m);
-  refinement_scan = cap(
+  Cloud::ConstPtr refinement_scan =
+    voxelDownsample(request.scan, config_.refinement_scan_leaf_size_m);
+  refinement_scan = deterministicallyCap(
     refinement_scan, config_.maximum_refinement_scan_points);
   pcl::NormalDistributionsTransform<Point, Point> refinement_matcher;
   configureRefinementMatcher(&refinement_matcher);

@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
-#include <string>
 #include <vector>
 
 #include <Eigen/Geometry>
@@ -108,7 +107,6 @@ public:
   OdometryLookup lookup(
     std::int64_t timestamp_ns,
     double maximum_interpolation_gap_seconds) const;
-  void clear();
   std::size_t size() const;
 
 private:
@@ -196,7 +194,6 @@ struct HypothesisSelection
   bool ambiguous = false;
   std::size_t best_index = 0;
   std::size_t second_index = 0;
-  std::size_t valid_candidates = 0;
   double best_score = 0.0;
   double second_score = 0.0;
   double score_margin = 0.0;

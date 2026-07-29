@@ -286,11 +286,6 @@ OdometryLookup OdometryBuffer::lookup(
   return result;
 }
 
-void OdometryBuffer::clear()
-{
-  samples_.clear();
-}
-
 std::size_t OdometryBuffer::size() const
 {
   return samples_.size();
@@ -539,7 +534,6 @@ HypothesisSelection selectBestHypothesis(
     {
       return candidates[left].score < candidates[right].score;
     });
-  selection.valid_candidates = ordered_indices.size();
   if (ordered_indices.empty()) {
     return selection;
   }

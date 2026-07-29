@@ -7,6 +7,7 @@ Phase 1 completed: 2026-07-29
 Phase 2 completed: 2026-07-29
 Phase 3 completed: 2026-07-29
 Replacement Phase 4 completed: 2026-07-29
+Post-Phase 4 refactor cleanup completed: 2026-07-29
 Package: `ndt_localization`
 
 ## 1. Objective
@@ -416,6 +417,12 @@ Exit criterion:
 - the combined deployment file contains no localization algorithm tuning;
 - removed mechanics retain the validated Phase 3 behavior internally;
 - measured performance does not regress.
+
+Post-phase cleanup removes stale diagnostics and redundant APIs, shares
+point-cloud preprocessing between tracking and initialization, and separates
+the tracking registration stages without changing worker or deadline
+semantics. Evidence is recorded in
+`benchmark/PHASE4_REFACTOR_CLEANUP.md`.
 
 ### Phase 5: Held-out validation
 

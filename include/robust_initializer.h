@@ -4,13 +4,10 @@
 #include <cstddef>
 #include <limits>
 #include <memory>
-#include <vector>
 
 #include "localization_core.h"
+#include "point_cloud_utils.h"
 
-#include <pcl/kdtree/kdtree_flann.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
 #include <pcl/registration/ndt.h>
 
 namespace ndt_localization
@@ -19,8 +16,8 @@ namespace ndt_localization
 class RobustInitializer
 {
 public:
-  using Point = pcl::PointXYZ;
-  using Cloud = pcl::PointCloud<Point>;
+  using Point = ndt_localization::Point;
+  using Cloud = ndt_localization::PointCloud;
 
   struct Config
   {
@@ -85,16 +82,6 @@ public:
   Result search(const Request & request);
 
 private:
-  Cloud::Ptr downsample(
-    const Cloud::ConstPtr & cloud,
-    double leaf_size_m) const;
-  Cloud::Ptr cap(
-    const Cloud::ConstPtr & cloud,
-    std::size_t maximum_points) const;
-  Cloud::Ptr localMap(
-    const Eigen::Vector3d & center,
-    double radius_m,
-    std::size_t maximum_points) const;
   Eigen::Isometry3d applyOffset(
     const Eigen::Isometry3d & prior_pose,
     const HypothesisOffset & offset) const;

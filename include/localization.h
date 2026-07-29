@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -16,27 +15,19 @@
 #include "builtin_interfaces/msg/time.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
-#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "localization_core.h"
 #include "nav_msgs/msg/odometry.hpp"
+#include "point_cloud_utils.h"
 #include "rclcpp/rclcpp.hpp"
 #include "robust_initializer.h"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/kdtree/kdtree_flann.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
 #include <pcl/registration/ndt.h>
-#include <pcl_conversions/pcl_conversions.h>
 
-#include <tf2/LinearMath/Transform.h>
-#include <tf2_eigen/tf2_eigen.hpp>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 
-using PointType = pcl::PointXYZ;
+using PointType = ndt_localization::Point;
 
 class LocalizationNode : public rclcpp::Node
 {
@@ -62,7 +53,6 @@ private:
     double odometry_after_gap_ms = 0.0;
     double translation_delta_m = std::numeric_limits<double>::quiet_NaN();
     double rotation_delta_deg = std::numeric_limits<double>::quiet_NaN();
-    double fitness_score = std::numeric_limits<double>::quiet_NaN();
     std::size_t raw_scan_points = 0;
     std::size_t filtered_scan_points = 0;
     std::size_t capped_scan_points = 0;
@@ -84,6 +74,13 @@ private:
     bool decided = false;
     ndt_localization::DecisionCode decision =
       ndt_localization::DecisionCode::NONE;
+  };
+
+  struct RegistrationInput
+  {
+    pcl::PointCloud<PointType>::ConstPtr scan;
+    pcl::PointCloud<PointType>::ConstPtr target;
+    Eigen::Isometry3d pose_guess = Eigen::Isometry3d::Identity();
   };
 
   struct InitializationTask
@@ -126,15 +123,6 @@ private:
   void initialPoseCallback(
     const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg);
 
-  pcl::PointCloud<PointType>::Ptr downsampleCloud(
-    const pcl::PointCloud<PointType>::Ptr & cloud,
-    double leaf_size);
-  pcl::PointCloud<PointType>::Ptr capCloud(
-    const pcl::PointCloud<PointType>::Ptr & cloud,
-    std::size_t maximum_points);
-  pcl::PointCloud<PointType>::Ptr buildLocalMap(
-    const Eigen::Vector3d & center,
-    ScanMetrics * metrics);
   ndt_localization::DecisionCode validateTimestamp(
     const builtin_interfaces::msg::Time & stamp,
     double maximum_age_seconds,
@@ -170,6 +158,25 @@ private:
   void initializationWorkerLoop();
   void deadlineWorkerLoop();
   void processScanTask(const std::shared_ptr<ScanTask> & task);
+  ndt_localization::DecisionCode prepareRegistrationInput(
+    const std::shared_ptr<ScanTask> & task,
+    const Eigen::Isometry3d & correction_guess,
+    const ndt_localization::OdometryLookup & synchronized_odometry,
+    ScanMetrics * metrics,
+    RegistrationInput * input);
+  bool runRegistration(
+    const RegistrationInput & input,
+    ScanMetrics * metrics,
+    Eigen::Isometry3d * optimized_pose);
+  void commitRegistrationResult(
+    const std::shared_ptr<ScanTask> & task,
+    const Eigen::Isometry3d & candidate_correction,
+    const std::chrono::steady_clock::time_point & validation_start,
+    ScanMetrics metrics);
+  void publishLateTimeoutResult(
+    const std::shared_ptr<ScanTask> & task,
+    const ScanMetrics & metrics,
+    bool rejection_published);
   void processInitializationTask(
     const std::shared_ptr<InitializationTask> & task);
   void enqueueInitializationScan(
@@ -213,7 +220,7 @@ private:
   rclcpp::CallbackGroup::SharedPtr odometry_callback_group_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
-  pcl::PointCloud<PointType>::Ptr global_map_;
+  pcl::PointCloud<PointType>::ConstPtr global_map_;
   pcl::KdTreeFLANN<PointType>::Ptr map_kdtree_;
   pcl::NormalDistributionsTransform<PointType, PointType> ndt_;
   std::unique_ptr<ndt_localization::RobustInitializer>
