@@ -41,6 +41,7 @@ LocalizationNode::LocalizationNode() : Node("localization_node")
   this->declare_parameter<double>("localization.ndt_map_leaf_size", 0.0);
   this->declare_parameter<double>("localization.ndt_scan_leaf_size", 0.0);
   this->declare_parameter<bool>("localization.ndt_log_runtime", false);
+  this->declare_parameter<bool>("localization.ndt_compute_fitness_score", false);
   this->declare_parameter<bool>("localization.publish_scan_diagnostics", true);
 
   this->get_parameter("odom_frame_id", this->odom_frame_id_);
@@ -53,6 +54,8 @@ LocalizationNode::LocalizationNode() : Node("localization_node")
   this->get_parameter("localization.ndt_map_leaf_size", this->ndt_map_leaf_size_);
   this->get_parameter("localization.ndt_scan_leaf_size", this->ndt_scan_leaf_size_);
   this->get_parameter("localization.ndt_log_runtime", this->ndt_log_runtime_);
+  this->get_parameter(
+      "localization.ndt_compute_fitness_score", this->ndt_compute_fitness_score_);
   this->get_parameter(
       "localization.publish_scan_diagnostics", this->publish_scan_diagnostics_);
 
@@ -260,7 +263,9 @@ void LocalizationNode::scanCallback(const sensor_msgs::msg::PointCloud2::ConstSh
   const auto validation_start = std::chrono::steady_clock::now();
   const bool converged = this->ndt_.hasConverged();
   const double fitness_score =
-      converged ? this->ndt_.getFitnessScore() : std::numeric_limits<double>::quiet_NaN();
+      converged && this->ndt_compute_fitness_score_ ?
+      this->ndt_.getFitnessScore() :
+      std::numeric_limits<double>::quiet_NaN();
   if (converged) {
       Eigen::Matrix4f T_map_base_opt = this->ndt_.getFinalTransformation();
 

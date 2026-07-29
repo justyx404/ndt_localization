@@ -213,7 +213,7 @@ class LocalizationBenchmarkEvaluator(Node):
         self.declare_parameter("max_interpolation_gap_seconds", 0.25)
         self.declare_parameter("deadline_ms", 80.0)
         self.declare_parameter("config_file", "")
-        self.declare_parameter("initial_pose_delay", 1.0)
+        self.declare_parameter("initial_pose_delay", 10.0)
         self.declare_parameter("translation_x", 0.0)
         self.declare_parameter("translation_y", 0.0)
         self.declare_parameter("translation_z", 0.0)
@@ -260,6 +260,7 @@ class LocalizationBenchmarkEvaluator(Node):
         self.recorded_map_odometry = []
         self.localization_odometry = []
         self.recorded_initial_poses = []
+        self.synthetic_initial_poses = []
         self.scan_metrics = []
         self.finalized = False
 
@@ -280,6 +281,12 @@ class LocalizationBenchmarkEvaluator(Node):
             PoseWithCovarianceStamped,
             "/reference/initialpose",
             self.recorded_initial_pose_callback,
+            qos,
+        )
+        self.create_subscription(
+            PoseWithCovarianceStamped,
+            "/benchmark/initialpose",
+            self.synthetic_initial_pose_callback,
             qos,
         )
         self.create_subscription(
@@ -345,6 +352,14 @@ class LocalizationBenchmarkEvaluator(Node):
             )
         )
 
+    def synthetic_initial_pose_callback(self, message):
+        self.synthetic_initial_poses.append(
+            (
+                stamp_seconds(message.header.stamp),
+                pose_from_ros(message.pose.pose),
+            )
+        )
+
     def scan_diagnostic_callback(self, message):
         timestamp = stamp_seconds(message.header.stamp)
         for status in message.status:
@@ -393,6 +408,7 @@ class LocalizationBenchmarkEvaluator(Node):
         self.recorded_map_odometry.sort(key=lambda item: item[0])
         self.localization_odometry.sort(key=lambda item: item[0])
         self.recorded_initial_poses.sort(key=lambda item: item[0])
+        self.synthetic_initial_poses.sort(key=lambda item: item[0])
         self.scan_metrics.sort(key=lambda item: item["timestamp"])
 
         reference_rows = self._reference_rows()
@@ -463,6 +479,11 @@ class LocalizationBenchmarkEvaluator(Node):
 
     def _reference_rows(self):
         rows = []
+        evaluation_start = (
+            self.synthetic_initial_poses[0][0]
+            if self.synthetic_initial_poses
+            else None
+        )
         for timestamp, recorded_pose in self.recorded_map_odometry:
             map_to_odom = interpolate_pose(
                 self.map_to_odom, timestamp, self.max_gap
@@ -475,9 +496,13 @@ class LocalizationBenchmarkEvaluator(Node):
                 if map_to_odom is not None and odom_to_base is not None
                 else None
             )
-            local_pose = interpolate_pose(
-                self.localization_odometry, timestamp, self.max_gap
-            )
+            local_pose = None
+            # The odometry sample stamped exactly at the prior time may have
+            # been published before the reset callback processed that prior.
+            if evaluation_start is not None and timestamp > evaluation_start:
+                local_pose = interpolate_pose(
+                    self.localization_odometry, timestamp, self.max_gap
+                )
             reconstruction_error = (
                 pose_error(recorded_pose, reconstructed)
                 if reconstructed is not None
@@ -630,13 +655,19 @@ class LocalizationBenchmarkEvaluator(Node):
                 "recorded_odometry_map": len(self.recorded_map_odometry),
                 "localization_odometry_map": len(self.localization_odometry),
                 "recorded_initial_pose": len(self.recorded_initial_poses),
+                "synthetic_initial_pose": len(self.synthetic_initial_poses),
                 "scan_diagnostics": len(self.scan_metrics),
             },
+            "localization_evaluation_start_timestamp": (
+                self.synthetic_initial_poses[0][0]
+                if self.synthetic_initial_poses
+                else None
+            ),
             "reference_reconstruction": {
                 "translation_error_m": distribution(reconstruction_translation),
                 "rotation_error_deg": distribution(reconstruction_rotation),
             },
-            "recorded_initial_pose_check": {
+            "recorded_initial_pose_header_timestamp_check": {
                 "translation_error_m": distribution(initial_translation),
                 "rotation_error_deg": distribution(initial_rotation),
             },

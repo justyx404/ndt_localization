@@ -35,7 +35,7 @@ def quaternion_multiply(left, right):
 class SyntheticInitialPose(Node):
     def __init__(self):
         super().__init__("synthetic_initial_pose")
-        self.declare_parameter("delay_seconds", 1.0)
+        self.declare_parameter("delay_seconds", 10.0)
         self.declare_parameter("translation_x", 0.0)
         self.declare_parameter("translation_y", 0.0)
         self.declare_parameter("translation_z", 0.0)

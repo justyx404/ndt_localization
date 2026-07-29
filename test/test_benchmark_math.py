@@ -2,19 +2,24 @@
 
 import importlib.util
 import math
+import sys
 from pathlib import Path
 
 import pytest
 
 
-SCRIPT_PATH = (
-    Path(__file__).parents[1]
-    / "scripts"
-    / "localization_benchmark_evaluator.py"
-)
+SCRIPTS_PATH = Path(__file__).parents[1] / "scripts"
+SCRIPT_PATH = SCRIPTS_PATH / "localization_benchmark_evaluator.py"
 SPEC = importlib.util.spec_from_file_location("benchmark_evaluator", SCRIPT_PATH)
 BENCHMARK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BENCHMARK)
+sys.modules["localization_benchmark_evaluator"] = BENCHMARK
+ANALYZER_SPEC = importlib.util.spec_from_file_location(
+    "analyze_reference_bag",
+    SCRIPTS_PATH / "analyze_reference_bag.py",
+)
+ANALYZER = importlib.util.module_from_spec(ANALYZER_SPEC)
+ANALYZER_SPEC.loader.exec_module(ANALYZER)
 
 
 def yaw_quaternion(degrees):
@@ -67,3 +72,32 @@ def test_distribution_reports_required_percentiles_and_maximum():
     assert result["p95"] == pytest.approx(3.85)
     assert result["p99_9"] == pytest.approx(3.997)
     assert result["maximum"] == pytest.approx(4.0)
+
+
+def test_initial_pose_alignment_selects_storage_timestamp():
+    identity = yaw_quaternion(0.0)
+    data = {
+        "map_to_odom": [
+            (10.0, ((0.0, 0.0, 0.0), identity)),
+            (11.0, ((0.0, 0.0, 0.0), identity)),
+        ],
+        "odom_to_base": [
+            (10.0, ((0.0, 0.0, 0.0), identity)),
+            (11.0, ((1.0, 0.0, 0.0), identity)),
+        ],
+        "recorded_map_odometry": [],
+        "recorded_initial_poses": [
+            {
+                "header_timestamp": 10.0,
+                "storage_timestamp": 11.0,
+                "pose": ((1.0, 0.0, 0.0), identity),
+            }
+        ],
+    }
+
+    _, rows = ANALYZER.analyze_data(data, 1.0, 0.5, 5.0)
+
+    assert rows[0]["header_translation_error_m"] == pytest.approx(1.0)
+    assert rows[0]["storage_translation_error_m"] == pytest.approx(0.0)
+    assert rows[0]["selected_timestamp_basis"] == "storage"
+    assert rows[0]["matches_reference_threshold"] is True

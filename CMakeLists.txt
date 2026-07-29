@@ -84,6 +84,7 @@ install(DIRECTORY config
 )
 
 install(PROGRAMS
+  scripts/analyze_reference_bag.py
   scripts/localization_benchmark_evaluator.py
   scripts/synthetic_initial_pose.py
   scripts/run_development_baseline.py

@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 import yaml
@@ -20,81 +21,122 @@ DEVELOPMENT_BAGS = (
 )
 
 
-def metric(summary, path, key):
-    value = summary
+def load_json(path):
+    with open(path, "r", encoding="utf-8") as source:
+        return json.load(source)
+
+
+def write_json(path, value):
+    with open(path, "w", encoding="utf-8") as output:
+        json.dump(value, output, indent=2, sort_keys=True)
+        output.write("\n")
+
+
+def nested_metric(value, path, key, precision=3):
     for part in path:
         value = value.get(part, {})
     value = value.get(key)
-    return "n/a" if value is None else "%.3f" % value
+    return "n/a" if value is None else ("%.*f" % (precision, value))
 
 
 def write_aggregate(output_directory, results, command):
     aggregate = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "command": command,
         "runs": results,
     }
-    with open(
+    write_json(
         os.path.join(output_directory, "development_baseline.json"),
-        "w",
-        encoding="utf-8",
-    ) as output:
-        json.dump(aggregate, output, indent=2, sort_keys=True)
-        output.write("\n")
+        aggregate,
+    )
 
     lines = [
         "# Development-bag NDT localization baseline",
         "",
         "Generated: %s" % aggregate["generated_at_utc"],
         "",
-        "Recorded localization is used as regression/pseudo-ground-truth; "
-        "these values are not independent absolute-accuracy measurements.",
+        "Recorded localization is regression/pseudo-ground-truth, not "
+        "independent absolute ground truth. A timeout is a measured baseline "
+        "outcome; offline reference validation remains complete.",
         "",
-        "| Bag | Scans | Accepted | Ref reconstruction p95 (m) | "
-        "Localizer p95 (m) | Decision p95 (ms) | Decision max (ms) | "
-        "Deadline misses |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Bag | Replay status | Scans | Accepted | Reference p95 (m) | "
+        "Reference repeatable | Localizer p95 (m) | Decision p95 / max (ms) | "
+        "Max input age (ms) | Deadline misses |",
+        "|---|---|---:|---:|---:|:---:|---:|---:|---:|---:|",
     ]
     for name in DEVELOPMENT_BAGS:
         result = results.get(name, {})
-        if "error" in result:
-            lines.append("| %s | failed: %s | | | | | | |" % (name, result["error"]))
-            continue
-        samples = result.get("samples", {})
-        decisions = result.get("scan_decisions", {})
+        reference = result.get("reference", {})
+        replay = result.get("replay") or {}
+        samples = replay.get("samples", {})
+        decisions = replay.get("scan_decisions", {})
         accepted_fraction = decisions.get("accepted_fraction")
         accepted = (
             "n/a"
             if accepted_fraction is None
             else "%.1f%%" % (100.0 * accepted_fraction)
         )
+        repeatable = reference.get("repeatability", {}).get("identical")
+        repeatable_text = (
+            "yes"
+            if repeatable is True
+            else "no" if repeatable is False else "n/a"
+        )
+        decision_latency = replay.get("latency_ms", {}).get("total_ms", {})
+        p95_latency = decision_latency.get("p95")
+        max_latency = decision_latency.get("maximum")
+        latency_text = (
+            "n/a"
+            if p95_latency is None or max_latency is None
+            else "%.3f / %.3f" % (p95_latency, max_latency)
+        )
         lines.append(
-            "| %s | %s | %s | %s | %s | %s | %s | %s |"
+            "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |"
             % (
                 name,
+                result.get("status", "not_run"),
                 samples.get("scan_diagnostics", "n/a"),
                 accepted,
-                metric(
-                    result,
+                nested_metric(
+                    reference,
                     ("reference_reconstruction", "translation_error_m"),
                     "p95",
+                    precision=9,
                 ),
-                metric(
-                    result,
+                repeatable_text,
+                nested_metric(
+                    replay,
                     (
                         "localization_against_recorded_reference",
                         "translation_error_m",
                     ),
                     "p95",
                 ),
-                metric(result, ("latency_ms", "total_ms"), "p95"),
-                metric(result, ("latency_ms", "total_ms"), "maximum"),
+                latency_text,
+                nested_metric(
+                    replay, ("latency_ms", "input_age_ms"), "maximum"
+                ),
                 decisions.get("deadline_misses", "n/a"),
             )
         )
+    timed_out = [
+        name
+        for name, result in results.items()
+        if result.get("status") == "timed_out"
+    ]
+    failed = [
+        name
+        for name, result in results.items()
+        if result.get("status") in ("failed", "reference_failed")
+    ]
     lines.extend(
         [
+            "",
+            "- Timed-out baseline runs: %s"
+            % (", ".join(timed_out) if timed_out else "none"),
+            "- Harness/reference failures: %s"
+            % (", ".join(failed) if failed else "none"),
             "",
             "Reproduction command:",
             "",
@@ -112,6 +154,129 @@ def write_aggregate(output_directory, results, command):
         output.write("\n".join(lines))
 
 
+def wait_for_process(process, wall_timeout, label):
+    start = time.monotonic()
+    timed_out = False
+    try:
+        return_code = process.wait(timeout=wall_timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        print(
+            "%s exceeded its %.1fs wall timeout; requesting shutdown"
+            % (label, wall_timeout),
+            file=sys.stderr,
+            flush=True,
+        )
+        os.killpg(process.pid, signal.SIGINT)
+        try:
+            return_code = process.wait(timeout=15.0)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                return_code = process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                return_code = process.wait()
+    except KeyboardInterrupt:
+        os.killpg(process.pid, signal.SIGINT)
+        try:
+            process.wait(timeout=10.0)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGTERM)
+        raise
+    return return_code, timed_out, time.monotonic() - start
+
+
+def run_reference_analysis(args, bag_path, output_directory):
+    summary_path = os.path.join(output_directory, "summary.json")
+    command = [
+        "ros2",
+        "run",
+        "ndt_localization",
+        "analyze_reference_bag.py",
+        "--bag-path",
+        bag_path,
+        "--output-directory",
+        output_directory,
+        "--repeatability-runs",
+        str(args.reference_repeatability_runs),
+    ]
+    print("Validating reference:", " ".join(command), flush=True)
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            timeout=args.reference_analysis_timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return None, (
+            "offline reference analysis exceeded %.1f seconds"
+            % args.reference_analysis_timeout_seconds
+        )
+    if completed.returncode != 0:
+        return None, (
+            "offline reference analysis exited with code %d"
+            % completed.returncode
+        )
+    try:
+        return load_json(summary_path), None
+    except (OSError, json.JSONDecodeError) as error:
+        return None, "cannot load reference summary: %s" % error
+
+
+def run_live_replay(args, bag_name, bag_path, output_directory, duration_ns):
+    summary_path = os.path.join(output_directory, "summary.json")
+    replay_duration = duration_ns * 1.0e-9 / args.rate
+    wall_timeout = (
+        replay_duration * args.timeout_factor
+        + args.timeout_overhead_seconds
+    )
+    command = [
+        "ros2",
+        "launch",
+        "ndt_localization",
+        "benchmark_replay.launch.py",
+        "bag_path:=%s" % bag_path,
+        "output_directory:=%s" % output_directory,
+        "run_name:=%s" % bag_name,
+        "rate:=%s" % args.rate,
+        "start_offset:=%s" % args.start_offset,
+        "initial_pose_delay:=%s" % args.initial_pose_delay,
+    ]
+    print(
+        "Running (wall timeout %.1fs):" % wall_timeout,
+        " ".join(command),
+        flush=True,
+    )
+    process = subprocess.Popen(command, start_new_session=True)
+    return_code, timed_out, elapsed_seconds = wait_for_process(
+        process, wall_timeout, bag_name
+    )
+    replay_summary = None
+    summary_error = None
+    try:
+        replay_summary = load_json(summary_path)
+    except (OSError, json.JSONDecodeError) as error:
+        summary_error = str(error)
+
+    if timed_out:
+        status = "timed_out"
+    elif return_code != 0:
+        status = "failed"
+    elif replay_summary is None:
+        status = "failed"
+    else:
+        status = "completed"
+    return {
+        "status": status,
+        "wall_timeout_seconds": wall_timeout,
+        "wall_elapsed_seconds": elapsed_seconds,
+        "return_code": return_code,
+        "summary_error": summary_error,
+        "replay": replay_summary,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bags-root", required=True)
@@ -119,9 +284,15 @@ def main():
     parser.add_argument("--rate", type=float, default=1.0)
     parser.add_argument("--start-offset", type=float, default=0.0)
     parser.add_argument(
+        "--initial-pose-delay",
+        type=float,
+        default=10.0,
+        help="Seconds from the first recorded map pose to inject the prior",
+    )
+    parser.add_argument(
         "--timeout-factor",
         type=float,
-        default=3.0,
+        default=2.0,
         help="Wall timeout as this multiple of replay duration",
     )
     parser.add_argument(
@@ -130,8 +301,32 @@ def main():
         default=30.0,
         help="Startup/finalization allowance added to each run timeout",
     )
+    parser.add_argument(
+        "--reference-repeatability-runs", type=int, default=2
+    )
+    parser.add_argument(
+        "--reference-analysis-timeout-seconds",
+        type=float,
+        default=300.0,
+    )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    if args.rate <= 0.0:
+        parser.error("--rate must be positive")
+    if args.start_offset < 0.0:
+        parser.error("--start-offset cannot be negative")
+    if args.initial_pose_delay < 0.0:
+        parser.error("--initial-pose-delay cannot be negative")
+    if args.timeout_factor < 0.0:
+        parser.error("--timeout-factor cannot be negative")
+    if args.timeout_overhead_seconds < 0.0:
+        parser.error("--timeout-overhead-seconds cannot be negative")
+    if args.reference_repeatability_runs < 1:
+        parser.error("--reference-repeatability-runs must be at least 1")
+    if args.reference_analysis_timeout_seconds <= 0.0:
+        parser.error(
+            "--reference-analysis-timeout-seconds must be positive"
+        )
 
     bags_root = os.path.abspath(args.bags_root)
     output_directory = os.path.abspath(args.output_dir)
@@ -139,14 +334,18 @@ def main():
     reproduction_command = (
         "ros2 run ndt_localization run_development_baseline.py "
         "--bags-root %s --output-dir %s --rate %s --start-offset %s"
+        " --initial-pose-delay %s"
         " --timeout-factor %s --timeout-overhead-seconds %s"
+        " --reference-repeatability-runs %s"
         % (
             bags_root,
             output_directory,
             args.rate,
             args.start_offset,
+            args.initial_pose_delay,
             args.timeout_factor,
             args.timeout_overhead_seconds,
+            args.reference_repeatability_runs,
         )
     )
     results = {}
@@ -154,91 +353,65 @@ def main():
         bag_path = os.path.join(bags_root, bag_name)
         metadata_path = os.path.join(bag_path, "metadata.yaml")
         run_output = os.path.join(output_directory, bag_name)
-        summary_path = os.path.join(run_output, "summary.json")
+        reference_output = os.path.join(run_output, "reference")
+        replay_output = os.path.join(run_output, "replay")
+        status_path = os.path.join(run_output, "run_status.json")
         if not os.path.isfile(metadata_path):
-            results[bag_name] = {"error": "bag not found: %s" % bag_path}
+            results[bag_name] = {
+                "status": "reference_failed",
+                "error": "bag not found: %s" % bag_path,
+            }
+            write_aggregate(
+                output_directory, results, reproduction_command
+            )
             continue
-        if args.force or not os.path.isfile(summary_path):
-            os.makedirs(run_output, exist_ok=True)
-            with open(metadata_path, "r", encoding="utf-8") as metadata_file:
-                metadata = yaml.safe_load(metadata_file)
-            duration_ns = metadata["rosbag2_bagfile_information"]["duration"][
-                "nanoseconds"
-            ]
-            replay_duration = duration_ns * 1.0e-9 / args.rate
-            wall_timeout = (
-                replay_duration * args.timeout_factor
-                + args.timeout_overhead_seconds
+        if not args.force and os.path.isfile(status_path):
+            results[bag_name] = load_json(status_path)
+            write_aggregate(
+                output_directory, results, reproduction_command
             )
-            command = [
-                "ros2",
-                "launch",
-                "ndt_localization",
-                "benchmark_replay.launch.py",
-                "bag_path:=%s" % bag_path,
-                "output_directory:=%s" % run_output,
-                "run_name:=%s" % bag_name,
-                "rate:=%s" % args.rate,
-                "start_offset:=%s" % args.start_offset,
+            continue
+
+        os.makedirs(reference_output, exist_ok=True)
+        os.makedirs(replay_output, exist_ok=True)
+        with open(metadata_path, "r", encoding="utf-8") as metadata_file:
+            metadata = yaml.safe_load(metadata_file)[
+                "rosbag2_bagfile_information"
             ]
-            print(
-                "Running (wall timeout %.1fs):" % wall_timeout,
-                " ".join(command),
-                flush=True,
+        reference, reference_error = run_reference_analysis(
+            args, bag_path, reference_output
+        )
+        if reference_error is not None:
+            result = {
+                "status": "reference_failed",
+                "error": reference_error,
+                "reference": reference,
+                "replay": None,
+            }
+        else:
+            result = run_live_replay(
+                args,
+                bag_name,
+                bag_path,
+                replay_output,
+                metadata["duration"]["nanoseconds"],
             )
-            process = subprocess.Popen(command, start_new_session=True)
-            timed_out = False
-            try:
-                return_code = process.wait(timeout=wall_timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                print(
-                    "%s exceeded its %.1fs wall timeout; requesting shutdown"
-                    % (bag_name, wall_timeout),
-                    file=sys.stderr,
-                    flush=True,
-                )
-                os.killpg(process.pid, signal.SIGINT)
-                try:
-                    return_code = process.wait(timeout=15.0)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    try:
-                        return_code = process.wait(timeout=5.0)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        return_code = process.wait()
-            except KeyboardInterrupt:
-                os.killpg(process.pid, signal.SIGINT)
-                try:
-                    process.wait(timeout=10.0)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGTERM)
-                raise
-            if timed_out:
-                results[bag_name] = {
-                    "error": "wall timeout after %.1f seconds" % wall_timeout
-                }
-                write_aggregate(
-                    output_directory, results, reproduction_command
-                )
-                continue
-            if return_code != 0:
-                results[bag_name] = {
-                    "error": "launch exited with code %d" % return_code
-                }
-                continue
-        try:
-            with open(summary_path, "r", encoding="utf-8") as summary_file:
-                results[bag_name] = json.load(summary_file)
-        except (OSError, json.JSONDecodeError) as error:
-            results[bag_name] = {"error": str(error)}
+            result["reference"] = reference
+        write_json(status_path, result)
+        results[bag_name] = result
         write_aggregate(output_directory, results, reproduction_command)
 
     write_aggregate(output_directory, results, reproduction_command)
-    failed = [name for name, result in results.items() if "error" in result]
-    if failed:
-        print("Failed runs: %s" % ", ".join(failed), file=sys.stderr)
+    harness_failures = [
+        name
+        for name, result in results.items()
+        if result.get("status") in ("failed", "reference_failed")
+    ]
+    if harness_failures:
+        print(
+            "Harness failures: %s" % ", ".join(harness_failures),
+            file=sys.stderr,
+        )
         return 1
     print(
         "Wrote %s"

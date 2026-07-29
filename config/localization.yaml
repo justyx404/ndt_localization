@@ -16,4 +16,7 @@
       ndt_map_leaf_size: 0.0
       ndt_scan_leaf_size: 0.0
       ndt_log_runtime: false
+      # Computing PCL's full fitness score adds a separate O(scan points)
+      # pass. Keep it disabled for untouched matcher timing baselines.
+      ndt_compute_fitness_score: false
       publish_scan_diagnostics: true

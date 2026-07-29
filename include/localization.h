@@ -93,5 +93,6 @@ private:
   double ndt_map_leaf_size_;
   double ndt_scan_leaf_size_;
   bool ndt_log_runtime_;
+  bool ndt_compute_fitness_score_;
   bool publish_scan_diagnostics_;
 };

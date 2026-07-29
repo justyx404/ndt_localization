@@ -1,7 +1,8 @@
 # Robust and Bounded-Latency Localization Plan
 
-Status: Proposed  
-Date: 2026-07-24  
+Status: Phase 0 complete; Phase 1 not started
+Date: 2026-07-24
+Phase 0 completed: 2026-07-29
 Package: `ndt_localization`
 
 ## 1. Objective

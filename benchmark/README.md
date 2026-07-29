@@ -17,10 +17,29 @@ T_map_base(t) = T_map_odom(t) * T_odom_base(t)
 ```
 
 Translation is linearly interpolated and orientation uses quaternion SLERP.
-Samples are rejected when either side of the interpolation interval exceeds the
-configured maximum gap.
+Samples are unavailable when either side of the interpolation interval exceeds
+the configured maximum gap.
 
-## One-bag replay
+## Offline reference validation
+
+The deterministic offline analyzer reads only the four reference topics
+directly from a bag, without DDS or the localizer:
+
+```bash
+ros2 run ndt_localization analyze_reference_bag.py \
+  --bag-path /absolute/path/to/mine_nav1_r1 \
+  --output-directory /tmp/ndt_reference/mine_nav1_r1 \
+  --repeatability-runs 2
+```
+
+It cross-checks reconstructed poses against recorded `/odometry_map`. For a
+recorded `/initialpose`, it evaluates both the message header time and bag
+storage time. The storage time represents when rosbag recorded and later
+replays the message; this resolves the delayed-header semantics present in the
+mine bags. Both interpretations and the selected one are retained in CSV and
+JSON.
+
+## One-bag live replay
 
 Build and source the workspace, then run:
 
@@ -29,8 +48,15 @@ ros2 launch ndt_localization benchmark_replay.launch.py \
   bag_path:=/absolute/path/to/mine_nav1_r1 \
   output_directory:=/tmp/ndt_baseline/mine_nav1_r1 \
   run_name:=mine_nav1_r1 \
-  rate:=1.0
+  rate:=1.0 \
+  initial_pose_delay:=10.0
 ```
+
+The default synthetic prior is copied from recorded map odometry 10 seconds
+after its first sample. Localizer trajectory error is scored strictly after
+that prior timestamp because the odometry sample at the same timestamp may
+have been published before the reset callback. Pre-initialization scan
+decisions and latency remain in the report.
 
 Controlled perturbations are launch arguments:
 
@@ -38,11 +64,12 @@ Controlled perturbations are launch arguments:
 ros2 launch ndt_localization benchmark_replay.launch.py \
   bag_path:=/absolute/path/to/mine_nav1_r1 \
   output_directory:=/tmp/ndt_perturbed/mine_nav1_r1 \
+  initial_pose_delay:=10.0 \
   translation_x:=2.0 yaw_degrees:=30.0 \
   position_sigma:=2.0 yaw_sigma_degrees:=30.0
 ```
 
-Each run writes:
+Each live run writes:
 
 - `reference_pose_metrics.csv`;
 - `initial_pose_checks.csv`;
@@ -56,17 +83,21 @@ Each run writes:
 ros2 run ndt_localization run_development_baseline.py \
   --bags-root /home/spotbot/Workspace/spot_nav_ws \
   --output-dir /tmp/ndt_development_baseline \
-  --rate 1.0
+  --rate 1.0 \
+  --initial-pose-delay 10.0
 ```
 
-The aggregate `development_baseline.md` and
-`development_baseline.json` preserve the exact reproduction command. Generated
-data belongs in an external results directory; source bags are never modified.
-Each replay also has a wall timeout derived from its recorded duration, so a
-pathological registration or reliable-transport stall becomes an explicit
-failed run instead of blocking the suite indefinitely. The timeout factor and
-startup allowance are configurable CLI arguments.
+Each bag directory contains separate `reference/` and `replay/` artifacts plus
+`run_status.json`. The aggregate `development_baseline.md` and
+`development_baseline.json` preserve the reproduction command.
 
-Recorded `/odometry_map` is regression/pseudo-ground-truth produced by the
-existing localization system. Reports must not describe it as independent
-survey-grade truth.
+The runner performs two offline reference passes by default, then a live
+replay. Each live replay has a wall timeout derived from its recorded duration.
+A timeout is retained as a measured baseline outcome, including any partial
+summary produced during graceful shutdown; a true harness or reference failure
+returns a nonzero exit status. Existing completed runs can be resumed unless
+`--force` is supplied.
+
+Generated data belongs in an external results directory; source bags are never
+modified. Recorded `/odometry_map` is regression/pseudo-ground-truth produced
+by the existing localization system, not independent survey-grade truth.

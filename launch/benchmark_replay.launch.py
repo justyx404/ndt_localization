@@ -36,7 +36,7 @@ def generate_launch_description():
         DeclareLaunchArgument("run_name", default_value="benchmark"),
         DeclareLaunchArgument("rate", default_value="1.0"),
         DeclareLaunchArgument("start_offset", default_value="0.0"),
-        DeclareLaunchArgument("initial_pose_delay", default_value="1.0"),
+        DeclareLaunchArgument("initial_pose_delay", default_value="10.0"),
         DeclareLaunchArgument("translation_x", default_value="0.0"),
         DeclareLaunchArgument("translation_y", default_value="0.0"),
         DeclareLaunchArgument("translation_z", default_value="0.0"),
