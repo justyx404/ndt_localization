@@ -123,7 +123,12 @@ bool RobustInitializer::search(
     Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
     pose.matrix() =
       coarse_matcher.getFinalTransformation().cast<double>();
-    if (!std::isfinite(fitness) || !pose.matrix().allFinite()) {
+    if (!std::isfinite(fitness) ||
+      !validTransformCandidate(
+        request.prior_pose, pose,
+        request.bounds.acceptance_translation_m,
+        request.bounds.acceptance_yaw_deg))
+    {
       continue;
     }
     ScoredPose candidate;
@@ -186,7 +191,12 @@ bool RobustInitializer::search(
     Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
     pose.matrix() =
       refinement_matcher.getFinalTransformation().cast<double>();
-    if (!std::isfinite(fitness) || !pose.matrix().allFinite()) {
+    if (!std::isfinite(fitness) ||
+      !validTransformCandidate(
+        request.prior_pose, pose,
+        request.bounds.acceptance_translation_m,
+        request.bounds.acceptance_yaw_deg))
+    {
       continue;
     }
     ScoredPose candidate;

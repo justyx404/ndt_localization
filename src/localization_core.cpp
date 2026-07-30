@@ -12,6 +12,8 @@ namespace
 
 constexpr double kNanosecondsPerSecond = 1.0e9;
 constexpr double kPi = 3.14159265358979323846;
+// Allow optimizer and interpolation noise at the covariance envelope edge.
+constexpr double kInitializationAcceptanceSlackFactor = 1.1;
 
 bool finiteTransform(const Eigen::Isometry3d & transform)
 {
@@ -263,6 +265,20 @@ InitializationSearchBounds initializationSearchBounds(
     std::max(
       minimum_yaw_span_deg,
       yaw_stddev_deg * standard_deviation_multiplier));
+  bounds.acceptance_translation_m =
+    kInitializationAcceptanceSlackFactor *
+    std::min(
+      maximum_translation_span_m,
+      std::max(
+        0.5,
+        position_stddev_m * standard_deviation_multiplier));
+  bounds.acceptance_yaw_deg =
+    kInitializationAcceptanceSlackFactor *
+    std::min(
+      maximum_yaw_span_deg,
+      std::max(
+        10.0,
+        yaw_stddev_deg * standard_deviation_multiplier));
   return bounds;
 }
 
@@ -640,7 +656,7 @@ LocalizationStateMachine::observeInitializationCorrection(
     return observation;
   }
   if (!validTransformCandidate(
-      pending_correction_, candidate_correction,
+      initial_prior_correction_, candidate_correction,
       maximum_translation_delta_m, maximum_rotation_delta_deg))
   {
     pending_correction_ = initial_prior_correction_;
@@ -648,7 +664,6 @@ LocalizationStateMachine::observeInitializationCorrection(
     return observation;
   }
 
-  pending_correction_ = candidate_correction;
   ++confirmation_count_;
   observation.accepted = true;
   observation.confirmation_count = confirmation_count_;
@@ -656,7 +671,8 @@ LocalizationStateMachine::observeInitializationCorrection(
     return observation;
   }
 
-  correction_ = pending_correction_;
+  pending_correction_ = candidate_correction;
+  correction_ = candidate_correction;
   has_valid_correction_ = true;
   state_ = LocalizationState::TRACKING;
   confirmation_count_ = required_confirmations_;

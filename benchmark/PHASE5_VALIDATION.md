@@ -1,0 +1,226 @@
+# Phase 5 held-out validation
+
+Date: 2026-07-29  
+Platform: Intel i7-1360P, ROS 2 Humble, x86-64
+
+Phase 5 validates the production localizer on held-out bags, artificial
+initial-pose perturbations, input faults, overload, recovery, and
+false-acceptance cases. No production parameter was retuned during this
+phase.
+
+## Artificial initial poses
+
+Recorded `/initialpose` was not used because it is absent or unsuitable in
+several bags. Every run instead constructed an artificial prior from the
+isolated `/reference/odometry_map` stream:
+
+- the pose came from the nearest reference sample;
+- the header stamp came from an actual `/odometry_lio` message accepted by
+  the localizer;
+- the reference-to-odometry timestamp gap was limited to 250 ms;
+- requested translation/yaw perturbations and matching covariance were then
+  applied;
+- the bag's recorded `/initialpose`, when present, remained isolated under
+  `/reference/initialpose`.
+
+Stamping the pose from the reference stream itself was rejected as a harness
+design because the recorded streams do not always have identical header
+timestamps. Using an actual localizer odometry stamp removed that artifact
+without exposing the node to reference topics.
+
+## Safety hardening found by the held-out suite
+
+The first held-out pass found an early interval in `mine_nav1_r3` where a
+geometrically plausible but wrong corridor solution could be confirmed.
+Phase 5 therefore adds three internal checks without adding ROS parameters:
+
+- coarse and refined initialization candidates must remain inside a
+  covariance-supported acceptance envelope around the prior;
+- each confirmation is checked against the originally selected candidate,
+  rather than allowing pairwise confirmation deltas to chain away from it;
+- each confirmation pose must also remain inside the original prior's
+  acceptance envelope at that scan timestamp.
+
+The acceptance envelope is `2.5 * sigma`, with the validated 0.5 m/10 degree
+minimum and 10 percent numerical slack, capped by the existing configured
+search limits before slack.
+
+An intermediate Phase 5 build retried a weak robust-search result on newer
+scans during the same two-second attempt. Adversarial replay showed that this
+could eventually find and accept an alias. The final implementation retains
+the conservative Phase 3 rule: the first weak/invalid robust-search result
+fails that attempt. This is intentionally an availability-for-safety choice.
+
+The final checks add no diagnostic publisher, decision taxonomy, Python
+runtime, YAML setting, or public parameter.
+
+## Dataset split
+
+The four `*_r1` bags remained development data. The primary held-out set was:
+
+- `mine_nav1_r2` through `mine_nav1_r5`;
+- `mine_nav2_r2` through `mine_nav2_r5`;
+- `mine_nav3_r2` through `mine_nav3_r5`;
+- `mine_nav4_r2` through `mine_nav4_r6`.
+
+`mine_nav1_r3` used a prior at 20 seconds because its 10-second interval is
+the explicit ambiguous-location negative case. All other primary bags used a
+prior after 10 seconds initially. `mine_nav4_r4` explicitly rejected that
+first scan and succeeded when a new artificial prior was supplied at 20
+seconds.
+
+## Held-out 1x replay
+
+All 17 bags localized from an artificial prior without changing production
+parameters. Sixteen succeeded at their selected initial time. The
+`mine_nav4_r4` 10-second attempt failed closed with zero output; a separate
+20-second prior succeeded.
+
+| Bag | Prior (s) | Outputs | Translation p95 / max (m) | Rotation p95 / max (deg) |
+|---|---:|---:|---:|---:|
+| `mine_nav1_r2` | 10 | 464 | 0.0325 / 0.2399 | 0.668 / 2.524 |
+| `mine_nav1_r3` | 20 | 232 | 0.0236 / 0.0513 | 0.682 / 2.692 |
+| `mine_nav1_r4` | 10 | 218 | 0.0228 / 0.0721 | 0.569 / 1.015 |
+| `mine_nav1_r5` | 10 | 244 | 0.0155 / 0.0464 | 0.438 / 1.691 |
+| `mine_nav2_r2` | 10 | 511 | 0.0401 / 0.1404 | 0.970 / 4.047 |
+| `mine_nav2_r3` | 10 | 584 | 0.0579 / 0.2073 | 1.012 / 4.602 |
+| `mine_nav2_r4` | 10 | 526 | 0.0315 / 0.1476 | 0.774 / 2.534 |
+| `mine_nav2_r5` | 10 | 489 | 0.0356 / 0.1084 | 0.987 / 2.957 |
+| `mine_nav3_r2` | 10 | 1,178 | 0.0306 / 0.1527 | 0.650 / 4.529 |
+| `mine_nav3_r3` | 10 | 1,190 | 0.0298 / 0.1981 | 0.608 / 3.389 |
+| `mine_nav3_r4` | 10 | 1,356 | 0.0262 / 0.1047 | 0.529 / 2.040 |
+| `mine_nav3_r5` | 10 | 1,164 | 0.0277 / 0.1341 | 0.721 / 4.302 |
+| `mine_nav4_r2` | 10 | 958 | 0.0189 / 0.1415 | 0.401 / 1.718 |
+| `mine_nav4_r3` | 10 | 1,145 | 0.0452 / 0.1148 | 0.641 / 5.390 |
+| `mine_nav4_r4` | 20 | 1,370 | 0.0381 / 0.1043 | 0.610 / 4.273 |
+| `mine_nav4_r5` | 10 | 1,768 | 0.0398 / 0.0981 | 0.619 / 3.154 |
+| `mine_nav4_r6` | 10 | 1,500 | 0.0414 / 0.1047 | 1.170 / 7.288 |
+
+The effective 17-bag set contains 14,897 localized outputs and 14,668
+reference-scored samples. Worst translation p95/max is 0.0579/0.2399 m.
+Worst rotation p95/max is 1.170/7.288 degrees. The two rotation maxima above
+5 degrees are isolated tracking samples in `mine_nav4_r3` and
+`mine_nav4_r6`; their translation errors remain about 0.1 m. Every first
+validated pose is within 0.2399 m and 4.529 degrees, satisfying the
+provisional successful-initialization criterion.
+
+## Perturbation sweep
+
+The complete bin sweep used `mine_nav1_r2`. Translation and yaw covariance
+were chosen so `2.5 * sigma` covered the requested perturbation. Every
+successful result stayed within the provisional 0.5 m/5 degree
+initialization threshold.
+
+| Artificial prior | Rate | Outputs | Translation p95 / max (m) | Rotation p95 / max (deg) |
+|---|---:|---:|---:|---:|
+| 0.5 m | 1x | 455 | 0.0316 / 0.3837 | 0.618 / 1.852 |
+| 1 m | 1x | 448 | 0.0325 / 0.1418 | 0.668 / 1.977 |
+| 2 m | 1x | 448 | 0.0325 / 0.1418 | 0.668 / 1.977 |
+| 5 m | 2x | 449 | 0.0664 / 0.1199 | 1.076 / 1.811 |
+| 10 m | 2x | 450 | 0.0633 / 0.1378 | 1.070 / 2.281 |
+| 5 deg | 1x | 464 | 0.0366 / 0.2187 | 0.794 / 4.489 |
+| 15 deg | 2x | 461 | 0.0421 / 0.0858 | 1.136 / 2.076 |
+| 30 deg | 2x | 461 | 0.0424 / 0.1090 | 1.107 / 1.811 |
+| 90 deg | 2x | 460 | 0.1010 / 0.1567 | 2.193 / 4.048 |
+| 180 deg | 1x | 464 | 0.0329 / 0.0851 | 0.668 / 1.852 |
+| 2 m / 30 deg | 1x | 451 | 0.0343 / 0.1109 | 0.668 / 1.852 |
+| 5 m / 90 deg | 1x | 464 | 0.0312 / 0.1368 | 0.609 / 1.852 |
+| 10 m / 180 deg | 1x | 452 | 0.0325 / 0.1124 | 0.684 / 1.852 |
+
+The first 2x sweep also explicitly failed several locally ambiguous cases
+that later succeeded at 1x; no output was published for those failed
+attempts. The within-attempt retry policy was removed after this sweep. That
+change does not alter a successful first-search path. The final binary was
+rerun at 1x for nominal, 0.5 m, 5 m/90 degree, and 10 m/180 degree cases, and
+the reported final-edge results above come from those reruns.
+
+## Input faults and false acceptance
+
+All fault cases used the final binary. A temporary relay outside the source
+and install trees deterministically dropped every fifth message or applied
+alternating timestamp offsets.
+
+| Scenario | Localized outputs | Translation p95 / max (m) | Rotation p95 / max (deg) |
+|---|---:|---:|---:|
+| 20% scan drop | 451 | 0.0392 / 0.0991 | 0.716 / 1.474 |
+| 20% odometry drop | 371 | 0.0440 / 0.2386 | 1.175 / 2.581 |
+| +/-10 ms scan and odometry jitter | 464 | 0.0332 / 0.2244 | 0.690 / 2.318 |
+| 10 m/180 deg outside tight covariance | 0 | explicit failure | explicit failure |
+| pose from a segment 35 s earlier | 0 | explicit failure | explicit failure |
+
+The mismatched-segment case copied a reference pose from 35 seconds earlier,
+stamped it with the current localizer odometry time, and assigned tight
+covariance. The first robust search failed and the final fail-closed policy
+published no transform. Together with the outside-covariance case, the final
+suite has zero known false-positive acceptances.
+
+## Recovery and replay overload
+
+`/localization/trigger_relocalization` returned success after nominal
+tracking. The run retained 448 localized outputs with translation error
+0.0325/0.1418 m p95/max and rotation error 0.668/1.977 degrees p95/max.
+
+| Replay condition | Outputs | Translation p95 / max (m) | Rotation p95 / max (deg) |
+|---|---:|---:|---:|
+| direct 2x startup | 0 | explicit failure | explicit failure |
+| direct 4x startup | 0 | explicit failure | explicit failure |
+| initialize 1x, then 2x | 465 | 0.0558 / 0.1831 | 1.269 / 4.874 |
+| initialize 1x, then 4x | 448 | 0.3170 / 0.3849 | 6.451 / 7.479 |
+
+Direct accelerated startup is deliberately fail-closed because the first
+robust search is weak under that input rate. The ramped tests isolate tracking
+overload from initialization. Ramped 2x remains inside the successful-pose
+accuracy threshold. Ramped 4x keeps output and bounded translation, but
+exceeds the 5 degree rotation target; it is an overload accuracy exception,
+not a nominal pass.
+
+## Build and production audit
+
+- The package builds cleanly with `colcon`.
+- All 18 localization-core and three point-cloud utility cases pass.
+- Cppcheck reports no warning, style, performance, or portability finding.
+- `git diff --check` passes.
+- The installed runtime contains the C++ localization executable and
+  `config/localization.yaml`; it contains no replay Python, benchmark launch,
+  replay QoS, or synthetic-pose file.
+
+## Exit criteria
+
+- All 17 held-out primary bags localize from a valid artificial prior time:
+  **pass**.
+- Successful first poses remain within 0.5 m and 5 degrees: **pass**.
+- Final outside-covariance and mismatched-segment cases have zero false
+  acceptances: **pass**.
+- Drop, jitter, recovery, and ramped 2x retain bounded output and trajectory
+  accuracy: **pass**.
+- Ramped 4x rotation exceeds the provisional target: **documented overload
+  exception**.
+- The distinct `test_data/mine_nav3_r5` artifact is absent: **documented
+  dataset exception**.
+- Production parameters were not retuned on the available `mine_nav3_r5`
+  stress proxy: **pass**.
+
+## Measurement limits
+
+Recorded `/odometry_map` is regression pseudo-ground-truth reconstructed from
+the isolated reference transform; it is not independent survey-grade ground
+truth. Production diagnostic publishers were intentionally removed before
+this phase, so the final replays measure output continuity and trajectory
+error but do not recreate the earlier per-scan latency distributions. The
+80 ms latest-only decision path remains covered by the Phase 2/3 evidence,
+the unchanged deadline worker, and deterministic tests.
+
+The plan names a distinct `test_data/mine_nav3_r5` stress artifact. No
+`test_data` directory exists anywhere under the workspace. The available
+root-level `mine_nav3_r5` is included in the primary held-out set; it was not
+used for parameter tuning. The missing distinct artifact is the only planned
+dataset that could not be executed.
+
+Generated replay artifacts remained outside the repository:
+
+- `/tmp/ndt_phase5_heldout_failclosed.hBYb8a`;
+- `/tmp/ndt_phase5_r4_retry.9IKsQW`;
+- `/tmp/ndt_phase5_failclosed.v6pWjC`;
+- `/tmp/ndt_phase5_final_scenarios.Cyz42J`;
+- `/tmp/ndt_phase5_runtime_final.Le9yc5`;
+- `/tmp/ndt_phase5_ramped_final.3nZroo`.

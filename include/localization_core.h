@@ -91,6 +91,8 @@ struct InitializationSearchBounds
 {
   double translation_span_m = 0.0;
   double yaw_span_deg = 0.0;
+  double acceptance_translation_m = 0.0;
+  double acceptance_yaw_deg = 0.0;
 };
 
 InitializationSearchBounds initializationSearchBounds(

@@ -161,6 +161,8 @@ private:
   std::chrono::steady_clock::time_point initialization_attempt_deadline_;
   std::chrono::steady_clock::time_point next_relocalization_attempt_;
   ndt_localization::InitializationSearchBounds initialization_search_bounds_;
+  Eigen::Isometry3d initialization_prior_correction_ =
+    Eigen::Isometry3d::Identity();
   std::shared_ptr<InitializationTask> pending_initialization_task_;
   std::shared_ptr<InitializationTask> active_initialization_task_;
   std::unique_ptr<ndt_localization::OdometryBuffer> odometry_buffer_;

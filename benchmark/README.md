@@ -16,6 +16,11 @@ localization executable directly and loads that YAML.
 The removed replay harness can be recovered from Git commit `2588308` if a
 future algorithm change requires the same bag-validation workflow.
 
+Phase 5 temporarily recovered that archived harness outside the source tree
+and used odometry-synchronized artificial priors because recorded
+`/initialpose` is incomplete across the held-out bags. No replay Python or
+YAML file was restored to the production package.
+
 Validation records:
 
 - `BASELINE_OBSERVATIONS.md`
@@ -25,3 +30,4 @@ Validation records:
 - `PHASE4_CONFIG_MINIMIZATION.md`
 - `PHASE4_REFACTOR_CLEANUP.md`
 - `PRODUCTION_DIAGNOSTIC_REMOVAL.md`
+- `PHASE5_VALIDATION.md`

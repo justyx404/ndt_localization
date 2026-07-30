@@ -153,11 +153,22 @@ TEST(InitializationSearch, DerivesBoundedCovarianceAwareEnvelope)
     2.0, 30.0, 2.5, 1.0, 10.0, 15.0, 180.0);
   EXPECT_DOUBLE_EQ(bounds.translation_span_m, 5.0);
   EXPECT_DOUBLE_EQ(bounds.yaw_span_deg, 75.0);
+  EXPECT_DOUBLE_EQ(bounds.acceptance_translation_m, 5.5);
+  EXPECT_DOUBLE_EQ(bounds.acceptance_yaw_deg, 82.5);
 
   const auto capped = ndt_localization::initializationSearchBounds(
     10.0, 180.0, 2.5, 1.0, 10.0, 15.0, 180.0);
   EXPECT_DOUBLE_EQ(capped.translation_span_m, 10.0);
   EXPECT_DOUBLE_EQ(capped.yaw_span_deg, 180.0);
+  EXPECT_DOUBLE_EQ(capped.acceptance_translation_m, 11.0);
+  EXPECT_DOUBLE_EQ(capped.acceptance_yaw_deg, 198.0);
+
+  const auto tight = ndt_localization::initializationSearchBounds(
+    0.25, 5.0, 2.5, 1.0, 10.0, 15.0, 180.0);
+  EXPECT_DOUBLE_EQ(tight.translation_span_m, 1.0);
+  EXPECT_DOUBLE_EQ(tight.yaw_span_deg, 15.0);
+  EXPECT_DOUBLE_EQ(tight.acceptance_translation_m, 0.6875);
+  EXPECT_DOUBLE_EQ(tight.acceptance_yaw_deg, 13.75);
 }
 
 TEST(InitializationSearch, UsesPriorYawAndGravityAlignedTilt)
@@ -313,6 +324,14 @@ TEST(LocalizationStateMachine, RequiresConsecutiveConfirmation)
   EXPECT_FALSE(rejected.accepted);
   EXPECT_EQ(machine.confirmationCount(), 0u);
   EXPECT_FALSE(machine.hasValidCorrection());
+
+  const auto anchored = machine.observeInitializationCorrection(
+    pose(1.4), 0.5, 10.0);
+  EXPECT_TRUE(anchored.accepted);
+  const auto chained_drift = machine.observeInitializationCorrection(
+    pose(1.8), 0.5, 10.0);
+  EXPECT_FALSE(chained_drift.accepted);
+  EXPECT_EQ(machine.confirmationCount(), 0u);
 
   machine.observeInitializationCorrection(pose(1.1), 0.5, 10.0);
   machine.observeInitializationCorrection(pose(1.2), 0.5, 10.0);

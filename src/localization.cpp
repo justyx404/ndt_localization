@@ -752,10 +752,8 @@ void LocalizationNode::processInitializationTask(
   const bool candidate_valid =
     search_succeeded && ndt_localization::validTransformCandidate(
     request.prior_pose, selected_pose,
-    task->bounds.translation_span_m +
-    this->maximum_result_translation_delta_m_,
-    task->bounds.yaw_span_deg +
-    this->maximum_result_rotation_delta_deg_);
+    task->bounds.acceptance_translation_m,
+    task->bounds.acceptance_yaw_deg);
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
     if (!this->initialization_attempt_active_ ||
@@ -984,6 +982,9 @@ void LocalizationNode::processScanTask(
 
   ndt_localization::LocalizationState processing_state;
   Eigen::Isometry3d correction_guess = Eigen::Isometry3d::Identity();
+  Eigen::Isometry3d initialization_prior_correction =
+    Eigen::Isometry3d::Identity();
+  ndt_localization::InitializationSearchBounds initialization_bounds;
   {
     std::lock_guard<std::mutex> lock(this->registration_mutex_);
     if (task->decided) {
@@ -1000,6 +1001,9 @@ void LocalizationNode::processScanTask(
       ndt_localization::LocalizationState::RELOCALIZING) ?
       this->state_machine_->pendingCorrection() :
       this->state_machine_->correction();
+    initialization_prior_correction =
+      this->initialization_prior_correction_;
+    initialization_bounds = this->initialization_search_bounds_;
   }
   if (processing_state ==
     ndt_localization::LocalizationState::UNINITIALIZED)
@@ -1052,6 +1056,19 @@ void LocalizationNode::processScanTask(
     registration_input.pose_guess, optimized_pose,
     this->maximum_result_translation_delta_m_,
     this->maximum_result_rotation_delta_deg_))
+  {
+    this->finalizeRejectedTask(task, true);
+    return;
+  }
+  if ((processing_state ==
+    ndt_localization::LocalizationState::INITIALIZING ||
+    processing_state ==
+    ndt_localization::LocalizationState::RELOCALIZING) &&
+    !ndt_localization::validTransformCandidate(
+      initialization_prior_correction * synchronized_odometry.pose,
+      optimized_pose,
+      initialization_bounds.acceptance_translation_m,
+      initialization_bounds.acceptance_yaw_deg))
   {
     this->finalizeRejectedTask(task, true);
     return;
@@ -1253,6 +1270,7 @@ void LocalizationNode::beginInitialization(
     this->initialization_search_required_ = true;
     this->initialization_recovery_ = false;
     this->initialization_search_bounds_ = bounds;
+    this->initialization_prior_correction_ = prior_correction;
     this->initialization_attempt_deadline_ =
       std::chrono::steady_clock::now() +
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(
@@ -1299,6 +1317,11 @@ bool LocalizationNode::startRelocalization(
       this->recovery_translation_span_m_;
     this->initialization_search_bounds_.yaw_span_deg =
       this->recovery_yaw_span_deg_;
+    this->initialization_search_bounds_.acceptance_translation_m =
+      this->recovery_translation_span_m_;
+    this->initialization_search_bounds_.acceptance_yaw_deg =
+      this->recovery_yaw_span_deg_;
+    this->initialization_prior_correction_ = correction;
     this->initialization_attempt_deadline_ =
       now +
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(

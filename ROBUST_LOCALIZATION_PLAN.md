@@ -1,6 +1,6 @@
 # Robust and Bounded-Latency Localization Plan
 
-Status: Phases 0, 1, 2, 3, and replacement Phase 4 complete; Phase 5 not started
+Status: Phases 0, 1, 2, 3, replacement Phase 4, and Phase 5 complete
 Date: 2026-07-29
 Phase 0 completed: 2026-07-29
 Phase 1 completed: 2026-07-29
@@ -10,6 +10,7 @@ Replacement Phase 4 completed: 2026-07-29
 Post-Phase 4 refactor cleanup completed: 2026-07-29
 Production packaging cleanup completed: 2026-07-29
 Production diagnostic removal completed: 2026-07-29
+Phase 5 completed: 2026-07-29
 Package: `ndt_localization`
 
 ## 1. Objective
@@ -455,6 +456,16 @@ Exit criterion:
 
 - acceptance criteria are met or every exception is documented with evidence;
 - final parameters are derived without retuning on the stress case.
+
+Phase 5 is complete for every artifact available in the workspace. All 17
+held-out primary bags localized from a valid artificial-prior time with worst
+translation p95/max of 0.0579/0.2399 m. Final false-acceptance tests published
+zero transforms, 20 percent drop and +/-10 ms jitter cases stayed bounded,
+forced recovery succeeded, and ramped 2x replay remained accurate. Ramped 4x
+rotation is a documented overload exception. The separately named
+`test_data/mine_nav3_r5` artifact was not present; the available root-level
+bag was run without parameter tuning. Full evidence and measurement limits
+are recorded in `benchmark/PHASE5_VALIDATION.md`.
 
 ## 11. Expected code and artifact changes
 
