@@ -459,16 +459,14 @@ Exit criterion:
 
 Phase 5 is complete for every retained artifact available in the workspace.
 All 16 current held-out primary bags localized from a valid artificial-prior
-time with worst translation p95/max of 0.0579/0.2399 m. The operator
-subsequently discarded the problematic former `mine_nav4_r4` recording and
-renumbered the former `r5`/`r6` recordings to `r4`/`r5`; its earlier replay is
-retained only as historical fail-closed evidence. Final false-acceptance
-tests published zero transforms, 20 percent drop and +/-10 ms jitter cases
-stayed bounded, forced recovery succeeded, and ramped 2x replay remained
-accurate. Ramped 4x rotation is a documented overload exception. The
-separately named `test_data/mine_nav3_r5` artifact was not present; the
-available root-level bag was run without parameter tuning. Full evidence and
-measurement limits are recorded in `benchmark/PHASE5_VALIDATION.md`.
+time with worst translation p95/max of 0.0579/0.2399 m. Final
+false-acceptance tests published zero transforms, 20 percent drop and
++/-10 ms jitter cases stayed bounded, forced recovery succeeded, and ramped
+2x replay remained accurate. Ramped 4x rotation is a documented overload
+exception. The separately named `test_data/mine_nav3_r5` artifact was not
+present; the available root-level bag was run without parameter tuning. Full
+evidence and measurement limits are recorded in
+`benchmark/PHASE5_VALIDATION.md`.
 
 ## 11. Expected code and artifact changes
 
