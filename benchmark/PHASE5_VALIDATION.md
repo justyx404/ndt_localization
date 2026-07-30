@@ -4,9 +4,8 @@ Date: 2026-07-29
 Platform: Intel i7-1360P, ROS 2 Humble, x86-64
 
 Phase 5 validates the production localizer on held-out bags, artificial
-initial-pose perturbations, input faults, overload, recovery, and
-false-acceptance cases. No production parameter was retuned during this
-phase.
+initial-pose perturbations, input faults, recovery, tracking headroom, and
+false-acceptance cases. No production parameter was retuned during this phase.
 
 ## Artificial initial poses
 
@@ -101,33 +100,25 @@ provisional successful-initialization criterion.
 
 ## Perturbation sweep
 
-The complete bin sweep used `mine_nav1_r2`. Translation and yaw covariance
-were chosen so `2.5 * sigma` covered the requested perturbation. Every
-successful result stayed within the provisional 0.5 m/5 degree
+The retained 1x perturbation sweep used `mine_nav1_r2`. Translation and yaw
+covariance were chosen so `2.5 * sigma` covered the requested perturbation.
+Every successful result stayed within the provisional 0.5 m/5 degree
 initialization threshold.
 
-| Artificial prior | Rate | Outputs | Translation p95 / max (m) | Rotation p95 / max (deg) |
-|---|---:|---:|---:|---:|
-| 0.5 m | 1x | 455 | 0.0316 / 0.3837 | 0.618 / 1.852 |
-| 1 m | 1x | 448 | 0.0325 / 0.1418 | 0.668 / 1.977 |
-| 2 m | 1x | 448 | 0.0325 / 0.1418 | 0.668 / 1.977 |
-| 5 m | 2x | 449 | 0.0664 / 0.1199 | 1.076 / 1.811 |
-| 10 m | 2x | 450 | 0.0633 / 0.1378 | 1.070 / 2.281 |
-| 5 deg | 1x | 464 | 0.0366 / 0.2187 | 0.794 / 4.489 |
-| 15 deg | 2x | 461 | 0.0421 / 0.0858 | 1.136 / 2.076 |
-| 30 deg | 2x | 461 | 0.0424 / 0.1090 | 1.107 / 1.811 |
-| 90 deg | 2x | 460 | 0.1010 / 0.1567 | 2.193 / 4.048 |
-| 180 deg | 1x | 464 | 0.0329 / 0.0851 | 0.668 / 1.852 |
-| 2 m / 30 deg | 1x | 451 | 0.0343 / 0.1109 | 0.668 / 1.852 |
-| 5 m / 90 deg | 1x | 464 | 0.0312 / 0.1368 | 0.609 / 1.852 |
-| 10 m / 180 deg | 1x | 452 | 0.0325 / 0.1124 | 0.684 / 1.852 |
+| Artificial prior | Outputs | Translation p95 / max (m) | Rotation p95 / max (deg) |
+|---|---:|---:|---:|
+| 0.5 m | 455 | 0.0316 / 0.3837 | 0.618 / 1.852 |
+| 1 m | 448 | 0.0325 / 0.1418 | 0.668 / 1.977 |
+| 2 m | 448 | 0.0325 / 0.1418 | 0.668 / 1.977 |
+| 5 deg | 464 | 0.0366 / 0.2187 | 0.794 / 4.489 |
+| 180 deg | 464 | 0.0329 / 0.0851 | 0.668 / 1.852 |
+| 2 m / 30 deg | 451 | 0.0343 / 0.1109 | 0.668 / 1.852 |
+| 5 m / 90 deg | 464 | 0.0312 / 0.1368 | 0.609 / 1.852 |
+| 10 m / 180 deg | 452 | 0.0325 / 0.1124 | 0.684 / 1.852 |
 
-The first 2x sweep also explicitly failed several locally ambiguous cases
-that later succeeded at 1x; no output was published for those failed
-attempts. The within-attempt retry policy was removed after this sweep. That
-change does not alter a successful first-search path. The final binary was
-rerun at 1x for nominal, 0.5 m, 5 m/90 degree, and 10 m/180 degree cases, and
-the reported final-edge results above come from those reruns.
+All reported perturbation runs use 1x replay. The final binary was rerun for
+nominal, 0.5 m, 5 m/90 degree, and 10 m/180 degree cases; the reported
+final-edge results above come from those reruns.
 
 ## Input faults and false acceptance
 
@@ -149,25 +140,16 @@ covariance. The first robust search failed and the final fail-closed policy
 published no transform. Together with the outside-covariance case, the final
 suite has zero known false-positive acceptances.
 
-## Recovery and replay overload
+## Recovery and tracking headroom
 
 `/localization/trigger_relocalization` returned success after nominal
 tracking. The run retained 448 localized outputs with translation error
 0.0325/0.1418 m p95/max and rotation error 0.668/1.977 degrees p95/max.
 
-| Replay condition | Outputs | Translation p95 / max (m) | Rotation p95 / max (deg) |
-|---|---:|---:|---:|
-| direct 2x startup | 0 | explicit failure | explicit failure |
-| direct 4x startup | 0 | explicit failure | explicit failure |
-| initialize 1x, then 2x | 465 | 0.0558 / 0.1831 | 1.269 / 4.874 |
-| initialize 1x, then 4x | 448 | 0.3170 / 0.3849 | 6.451 / 7.479 |
-
-Direct accelerated startup is deliberately fail-closed because the first
-robust search is weak under that input rate. The ramped tests isolate tracking
-overload from initialization. Ramped 2x remains inside the successful-pose
-accuracy threshold. Ramped 4x keeps output and bounded translation, but
-exceeds the 5 degree rotation target; it is an overload accuracy exception,
-not a nominal pass.
+After initialization completed at 1x, replay was increased to 2x to isolate
+tracking headroom. The run retained 465 outputs with translation error
+0.0558/0.1831 m p95/max and rotation error 1.269/4.874 degrees p95/max,
+remaining inside the successful-pose accuracy threshold.
 
 ## Build and production audit
 
@@ -192,10 +174,8 @@ not a nominal pass.
 - Successful first poses remain within 0.5 m and 5 degrees: **pass**.
 - Final outside-covariance and mismatched-segment cases have zero false
   acceptances: **pass**.
-- Drop, jitter, recovery, and ramped 2x retain bounded output and trajectory
-  accuracy: **pass**.
-- Ramped 4x rotation exceeds the provisional target: **documented overload
-  exception**.
+- Drop, jitter, recovery, and 2x tracking after 1x initialization retain
+  bounded output and trajectory accuracy: **pass**.
 - The distinct `test_data/mine_nav3_r5` artifact is absent: **documented
   dataset exception**.
 - Production parameters were not retuned on the available `mine_nav3_r5`

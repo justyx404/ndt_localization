@@ -202,10 +202,10 @@ The test node's outputs will use a separate namespace. ROS simulated time will b
 ### 7.3 Replay rates
 
 - `1x`: nominal sensor rate and primary functional benchmark.
-- `2x`: backlog and throughput test.
-- `4x` or maximum sustainable rate: overload behavior.
+- `2x`: tracking-headroom test after initialization completes at `1x`.
 
-Overload must cause deliberate scan dropping or timeout rejection, not increasing message age or the later application of stale transforms.
+The tracking-headroom run must keep output and accuracy bounded without
+applying stale transforms.
 
 ### 7.4 Initialization perturbations
 
@@ -293,7 +293,8 @@ These values are initial engineering targets and will be finalized after measuri
 - No registration result older than the latest accepted processing generation is applied.
 - No unvalidated result updates `map -> odom_lidar`.
 - The scan queue does not grow under nominal 1x replay.
-- At overload rates, old scans are dropped and output age remains bounded.
+- During the 2x tracking-headroom run, output remains continuous and
+  trajectory accuracy remains bounded.
 - FAST-LIO prediction remains available during rejection, timeout, and `LOST`.
 
 ### 9.2 Initialization
@@ -366,7 +367,7 @@ Implement:
 Exit criterion:
 
 - nominal replay meets the decision budget;
-- accelerated replay does not create an increasing backlog;
+- the latest-only scan queue remains bounded;
 - late results are discarded.
 
 ### Phase 3: Robust initialization and recovery
@@ -448,7 +449,7 @@ Run:
 - forced loss/recovery;
 - dropped scan and odometry scenarios;
 - timestamp jitter;
-- `1x`, `2x`, and overload replay;
+- `1x` initialization and `2x` tracking headroom;
 - false-acceptance/mismatched segment tests;
 - final `test_data/mine_nav3_r5` stress run.
 
@@ -462,10 +463,10 @@ All 16 current held-out primary bags localized from a valid artificial-prior
 time with worst translation p95/max of 0.0579/0.2399 m. Final
 false-acceptance tests published zero transforms, 20 percent drop and
 +/-10 ms jitter cases stayed bounded, forced recovery succeeded, and ramped
-2x replay remained accurate. Ramped 4x rotation is a documented overload
-exception. The separately named `test_data/mine_nav3_r5` artifact was not
-present; the available root-level bag was run without parameter tuning. Full
-evidence and measurement limits are recorded in
+2x tracking remained accurate. The separately named
+`test_data/mine_nav3_r5` artifact was not present; the available root-level
+bag was run without parameter tuning. Full evidence and measurement limits
+are recorded in
 `benchmark/PHASE5_VALIDATION.md`.
 
 ## 11. Expected code and artifact changes

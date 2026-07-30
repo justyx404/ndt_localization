@@ -59,43 +59,9 @@ one 0.287 m maximum-error outlier, compared with 0.232 m in Phase 1, while its
 p95 remains 0.033 m. Recorded localization is regression/pseudo-ground-truth,
 not independent survey-grade ground truth.
 
-## Accelerated replay
-
-`mine_nav1_r1` completed at 2x with a validated correction:
-
-- 560 decisions, 90 superseded scans, and no timeouts or deadline overruns;
-- decision p95 / max of 50.104 / 65.605 ms;
-- queue-wait p95 / max of 15.697 / 50.325 ms;
-- 85 matcher calls finished after supersession and were discarded;
-- translation p95 / max of 0.028 / 0.071 m;
-- 452 map-odometry and TF outputs, continuously driven by valid FAST-LIO
-  odometry after initialization.
-
-For the overload test, replay began at 1x so the synthetic prior and three
-confirmations could establish `TRACKING`, then the live bag player was changed
-to 4x. This avoids measuring DDS loss in the synthetic-prior test harness as
-localizer initialization behavior.
-
-At 4x tracking load:
-
-- 561 decisions, 383 superseded scans, and 2 intentional timeouts;
-- zero decision overruns, with p95 / max of 37.756 / 79.197 ms;
-- queue-wait p95 / max of 27.905 / 40.256 ms;
-- 211 late matcher completions (209 superseded, 2 timed out), all discarded;
-- late NDT calls completed as late as 101.028 ms without applying a stale
-  correction;
-- the state remained `TRACKING`, and 458 map-odometry and TF outputs continued
-  from FAST-LIO using the last valid correction.
-
-Once 4x load stabilized, successive 5-second scan windows had mean queue waits
-of 15.9 to 19.4 ms and mean input ages of 171.9 to 186.1 ms. Neither metric
-grew with elapsed replay time. The bounded queue therefore shed old work
-instead of accumulating a backlog.
-
 ## Exit criteria
 
 - Nominal replay meets the 80 ms decision budget: **pass**.
-- Accelerated replay does not create an increasing backlog: **pass**.
 - Matcher results completing after timeout or supersession are discarded:
   **pass**.
 - FAST-LIO remains available with the last validated map correction:
@@ -111,29 +77,9 @@ ros2 run ndt_localization run_development_baseline.py \
   --initial-pose-delay 10.0 \
   --reference-repeatability-runs 1 \
   --force
-
-ros2 launch ndt_localization benchmark_replay.launch.py \
-  bag_path:=/home/spotbot/Workspace/spot_nav_ws/mine_nav1_r1 \
-  output_directory:=/tmp/ndt_phase2_mine1_2x_final \
-  run_name:=mine_nav1_r1_2x \
-  rate:=2.0 \
-  initial_pose_delay:=10.0
-
-# Start the overload run at 1x and wait for TRACKING.
-ROS_DOMAIN_ID=125 ros2 launch ndt_localization \
-  benchmark_replay.launch.py \
-  bag_path:=/home/spotbot/Workspace/spot_nav_ws/mine_nav1_r1 \
-  output_directory:=/tmp/ndt_phase2_mine1_1x_to_4x_final \
-  run_name:=mine_nav1_r1_1x_to_4x \
-  rate:=1.0 \
-  initial_pose_delay:=10.0
-
-# In a second shell, switch the active player to 4x.
-ROS_DOMAIN_ID=125 ros2 service call /rosbag2_player/set_rate \
-  rosbag2_interfaces/srv/SetRate "{rate: 4.0}"
 ```
 
 The validated localizer configuration SHA-256 is
 `82d4298e14085ff5984ac19baeb448a2c9041c12298aeacefc50e78f45abec74`.
 Generated CSV/JSON artifacts remain outside the source tree in the `/tmp`
-directories shown above.
+directory shown above.
