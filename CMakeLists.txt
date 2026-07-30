@@ -16,7 +16,6 @@ endif()
 # C++ Standard
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
 # Find dependencies
 find_package(ament_cmake REQUIRED)
@@ -56,14 +55,13 @@ include_directories(
 )
 
 # Localization state, validation, workload-control, and initialization core
-add_library(localization_core src/localization_core.cpp)
+add_library(localization_core STATIC src/localization_core.cpp)
 target_link_libraries(localization_core Eigen3::Eigen)
 target_include_directories(localization_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
 )
 
-add_library(point_cloud_utils src/point_cloud_utils.cpp)
+add_library(point_cloud_utils STATIC src/point_cloud_utils.cpp)
 target_link_libraries(
   point_cloud_utils
   localization_core
@@ -72,10 +70,9 @@ target_link_libraries(
 )
 target_include_directories(point_cloud_utils PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
 )
 
-add_library(robust_initializer src/robust_initializer.cpp)
+add_library(robust_initializer STATIC src/robust_initializer.cpp)
 target_link_libraries(
   robust_initializer
   localization_core
@@ -85,7 +82,6 @@ target_link_libraries(
 )
 target_include_directories(robust_initializer PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
 )
 
 # Localization node
@@ -100,15 +96,22 @@ target_link_libraries(
 )
 ament_target_dependencies(localization_node ${dependencies})
 
-# Install targets
+# Keep the validated production optimization explicit and scoped to runtime
+# code. This avoids imposing optimization flags on unrelated test targets.
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  foreach(target
+      localization_core
+      point_cloud_utils
+      robust_initializer
+      localization_node)
+    target_compile_options(${target} PRIVATE -O3)
+  endforeach()
+endif()
+
+# Install only the production executable. The static libraries and headers
+# are internal implementation details used by this build and its tests.
 install(
-  TARGETS
-    localization_node
-    localization_core
-    point_cloud_utils
-    robust_initializer
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
+  TARGETS localization_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -116,11 +119,6 @@ install(
 install(
   FILES config/localization.yaml
   DESTINATION share/${PROJECT_NAME}/config
-)
-
-# Install include files
-install(DIRECTORY include/
-  DESTINATION include/${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)

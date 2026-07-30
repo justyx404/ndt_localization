@@ -8,7 +8,7 @@ are not installed and add no runtime dependency.
 The production package now installs only:
 
 - `config/localization.yaml`;
-- the localization executable and its C++ libraries and headers.
+- the localization executable.
 
 The production `spot_navigation/launch/lio_localization.launch.py` starts the
 localization executable directly and loads that YAML.

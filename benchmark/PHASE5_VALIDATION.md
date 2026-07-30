@@ -56,25 +56,26 @@ runtime, YAML setting, or public parameter.
 
 ## Dataset split
 
-The four `*_r1` bags remained development data. The primary held-out set was:
+The four `*_r1` bags remained development data. After validation, the
+operator discarded the problematic recording that was originally named
+`mine_nav4_r4`, then renamed the original `mine_nav4_r5` and
+`mine_nav4_r6` recordings to `mine_nav4_r4` and `mine_nav4_r5`,
+respectively. The current primary held-out set is:
 
 - `mine_nav1_r2` through `mine_nav1_r5`;
 - `mine_nav2_r2` through `mine_nav2_r5`;
 - `mine_nav3_r2` through `mine_nav3_r5`;
-- `mine_nav4_r2` through `mine_nav4_r6`.
+- `mine_nav4_r2` through `mine_nav4_r5`.
 
 `mine_nav1_r3` used a prior at 20 seconds because its 10-second interval is
-the explicit ambiguous-location negative case. All other primary bags used a
-prior after 10 seconds initially. `mine_nav4_r4` explicitly rejected that
-first scan and succeeded when a new artificial prior was supplied at 20
-seconds.
+the explicit ambiguous-location negative case. All other current primary
+bags used a prior after 10 seconds.
 
 ## Held-out 1x replay
 
-All 17 bags localized from an artificial prior without changing production
-parameters. Sixteen succeeded at their selected initial time. The
-`mine_nav4_r4` 10-second attempt failed closed with zero output; a separate
-20-second prior succeeded.
+All 16 current bags localized from an artificial prior without changing
+production parameters. The two renamed recordings retain the measurements
+from their identical pre-rename contents.
 
 | Bag | Prior (s) | Outputs | Translation p95 / max (m) | Rotation p95 / max (deg) |
 |---|---:|---:|---:|---:|
@@ -92,17 +93,30 @@ parameters. Sixteen succeeded at their selected initial time. The
 | `mine_nav3_r5` | 10 | 1,164 | 0.0277 / 0.1341 | 0.721 / 4.302 |
 | `mine_nav4_r2` | 10 | 958 | 0.0189 / 0.1415 | 0.401 / 1.718 |
 | `mine_nav4_r3` | 10 | 1,145 | 0.0452 / 0.1148 | 0.641 / 5.390 |
-| `mine_nav4_r4` | 20 | 1,370 | 0.0381 / 0.1043 | 0.610 / 4.273 |
-| `mine_nav4_r5` | 10 | 1,768 | 0.0398 / 0.0981 | 0.619 / 3.154 |
-| `mine_nav4_r6` | 10 | 1,500 | 0.0414 / 0.1047 | 1.170 / 7.288 |
+| `mine_nav4_r4` (formerly `r5`) | 10 | 1,768 | 0.0398 / 0.0981 | 0.619 / 3.154 |
+| `mine_nav4_r5` (formerly `r6`) | 10 | 1,500 | 0.0414 / 0.1047 | 1.170 / 7.288 |
 
-The effective 17-bag set contains 14,897 localized outputs and 14,668
+The current 16-bag set contains 13,527 localized outputs and 13,320
 reference-scored samples. Worst translation p95/max is 0.0579/0.2399 m.
 Worst rotation p95/max is 1.170/7.288 degrees. The two rotation maxima above
 5 degrees are isolated tracking samples in `mine_nav4_r3` and
-`mine_nav4_r6`; their translation errors remain about 0.1 m. Every first
+the current `mine_nav4_r5`; their translation errors remain about 0.1 m. Every first
 validated pose is within 0.2399 m and 4.529 degrees, satisfying the
 provisional successful-initialization criterion.
+
+### Discarded recording evidence
+
+Before it was deleted, the former `mine_nav4_r4` failed closed with zero
+output from a 10-second artificial prior and localized from a separate
+20-second prior:
+
+| Former bag | Prior (s) | Outputs | Translation p95 / max (m) | Rotation p95 / max (deg) |
+|---|---:|---:|---:|---:|
+| discarded `mine_nav4_r4` | 20 | 1,370 | 0.0381 / 0.1043 | 0.610 / 4.273 |
+
+This result is retained only as historical fail-closed evidence. It is
+excluded from current dataset counts and exit criteria, and the name
+`mine_nav4_r4` now identifies the former `mine_nav4_r5` recording.
 
 ## Perturbation sweep
 
@@ -178,15 +192,21 @@ not a nominal pass.
 
 - The package builds cleanly with `colcon`.
 - All 18 localization-core and three point-cloud utility cases pass.
-- Cppcheck reports no warning, style, performance, or portability finding.
+- All production translation units retain explicit `-O3` optimization.
+- Cppcheck reports no warning, performance, or portability finding. Its three
+  `useStlAlgorithm` style suggestions are intentionally retained because the
+  explicit point-selection and candidate-distinction loops are clearer.
 - `git diff --check` passes.
 - The installed runtime contains the C++ localization executable and
-  `config/localization.yaml`; it contains no replay Python, benchmark launch,
-  replay QoS, or synthetic-pose file.
+  `config/localization.yaml`; internal static libraries and headers are not
+  installed.
+- The installed runtime contains no replay Python, benchmark launch, replay
+  QoS, or synthetic-pose file.
 
 ## Exit criteria
 
-- All 17 held-out primary bags localize from a valid artificial prior time:
+- All 16 current held-out primary bags localize from a valid artificial prior
+  time:
   **pass**.
 - Successful first poses remain within 0.5 m and 5 degrees: **pass**.
 - Final outside-covariance and mismatched-segment cases have zero false
@@ -224,3 +244,7 @@ Generated replay artifacts remained outside the repository:
 - `/tmp/ndt_phase5_final_scenarios.Cyz42J`;
 - `/tmp/ndt_phase5_runtime_final.Le9yc5`;
 - `/tmp/ndt_phase5_ramped_final.3nZroo`.
+
+These artifact directory and run names predate the post-validation bag
+renumbering, so their `mine_nav4_r5` and `mine_nav4_r6` names correspond to
+the current `mine_nav4_r4` and `mine_nav4_r5`, respectively.

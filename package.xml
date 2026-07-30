@@ -2,8 +2,8 @@
 <package format="3">
   <name>ndt_localization</name>
   <version>0.0.1</version>
-  <description>FAST-LIO Localization package - NDT-based localization against a pre-built map</description>
-  <maintainer email="user@example.com">user</maintainer>
+  <description>Robust NDT localization against a pre-built map using FAST-LIO odometry.</description>
+  <maintainer email="ygao@mst.edu">Yixiang</maintainer>
   <license>BSD</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
